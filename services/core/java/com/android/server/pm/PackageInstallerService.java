@@ -85,6 +85,7 @@ import android.content.pm.parsing.FrameworkParsingPackageUtils;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.SystemProperties;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -169,6 +170,10 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         PackageSessionProvider {
     private static final String TAG = "PackageInstaller";
     private static final boolean LOGD = Log.isLoggable(TAG, Log.DEBUG);
+    private static final String PACKAGE_PLAY_STORE = "com.android.vending";
+    private static final String PACKAGE_YOUTUBE = "com.google.android.youtube";
+    private static final String PACKAGE_YOUTUBE_MUSIC = "com.google.android.apps.youtube.music";
+    private static final String PROPERTY_MANAGED_STORE_UPDATES = "persist.sys.revan.mod";
 
     private static final boolean DEBUG = Build.IS_DEBUGGABLE;
 
@@ -782,6 +787,10 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         // written to disk.
         if (params.appPackageName != null && !isValidPackageName(params.appPackageName)) {
             params.appPackageName = null;
+        }
+
+        if (shouldBlockManagedStoreUpdate(installerPackageName, params.appPackageName)) {
+            throw new SecurityException("Play Store updates blocked for " + params.appPackageName);
         }
 
         params.appLabel = TextUtils.trimToSize(params.appLabel,
@@ -1446,6 +1455,24 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
         return "smdl" + sessionId + ".tmp";
     }
 
+    static boolean shouldBlockManagedStoreUpdate(@Nullable String installerPackageName,
+            @Nullable String packageName) {
+        return SystemProperties.getBoolean(PROPERTY_MANAGED_STORE_UPDATES, true)
+                && PACKAGE_PLAY_STORE.equals(installerPackageName)
+                && isManagedPackage(packageName);
+    }
+
+    private boolean shouldBlockManagedStoreUpdate(@Nullable String packageName, int callingUid) {
+        return SystemProperties.getBoolean(PROPERTY_MANAGED_STORE_UPDATES, true)
+                && isManagedPackage(packageName)
+                && ArrayUtils.contains(mPm.snapshotComputer().getPackagesForUid(callingUid),
+                        PACKAGE_PLAY_STORE);
+    }
+
+    private static boolean isManagedPackage(@Nullable String packageName) {
+        return PACKAGE_YOUTUBE.equals(packageName) || PACKAGE_YOUTUBE_MUSIC.equals(packageName);
+    }
+
     private boolean shouldFilterSession(@NonNull Computer snapshot, int uid, SessionInfo info) {
         if (info == null) {
             return false;
@@ -1701,6 +1728,12 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     @Override
     public void installExistingPackage(String packageName, int installFlags, int installReason,
             IntentSender statusReceiver, int userId, List<String> allowListedPermissions) {
+
+        if (shouldBlockManagedStoreUpdate(packageName, Binder.getCallingUid())) {
+            InstallPackageHelper.onInstallComplete(PackageManager.INSTALL_FAILED_ABORTED,
+                    mContext, statusReceiver);
+            return;
+        }
 
         var result = mPm.installExistingPackageAsUser(packageName, userId,
                 installFlags, installReason, allowListedPermissions, statusReceiver);
