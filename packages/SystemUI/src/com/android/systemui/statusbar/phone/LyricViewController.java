@@ -33,6 +33,8 @@ import android.widget.ImageSwitcher;
 import android.widget.ImageView;
 import android.widget.TextSwitcher;
 import android.widget.TextView;
+import android.content.pm.PackageManager;
+import android.media.session.MediaController;
 
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.util.ContrastColorUtil;
@@ -117,6 +119,7 @@ public abstract class LyricViewController implements
                     return;
                 }
                 mMediaLyricsActive = true;
+                updateMediaAppIcon();
                 mTextSwitcher.setText(line);
                 startLyric();
             }
@@ -125,6 +128,7 @@ public abstract class LyricViewController implements
             public void onPlainLyricsAvailable(String plainLyrics) {
                 if (!mEnabled) return;
                 mMediaLyricsActive = true;
+                updateMediaAppIcon();
                 mTextSwitcher.setText(plainLyrics);
                 startLyric();
             }
@@ -254,6 +258,24 @@ public abstract class LyricViewController implements
 
     public View getView() {
         return mLyricContainer;
+    }
+
+    private void updateMediaAppIcon() {
+        MediaController controller = mLyricsFetcher.getActiveController();
+        if (controller == null) {
+            return;
+        }
+
+        try {
+            Drawable icon = mContext.getPackageManager()
+                    .getApplicationIcon(controller.getPackageName());
+
+            if (icon != null) {
+                mIconSwitcher.setImageDrawable(icon);
+                updateIconTint();
+            }
+        } catch (PackageManager.NameNotFoundException ignored) {
+        }
     }
 
     private void updateIconTint() {
