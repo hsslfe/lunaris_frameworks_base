@@ -162,8 +162,8 @@ class PulseSettingsRepository(private val context: Context) {
     fun getHeightMultiplier(): Float {
         if (cachedHeightMultiplier == null) {
             val value = getSecureSetting(PULSE_HEIGHT_MULTIPLIER, DEFAULT_HEIGHT_MULTIPLIER)
-            // Clamp between 25% and 200% (values 25-200)
-            cachedHeightMultiplier = value.coerceIn(25, 200) / 100f
+            // Clamp between 0% and 200% (values 0-200)
+            cachedHeightMultiplier = value.coerceIn(0, 200) / 100f
         }
         return cachedHeightMultiplier!!
     }
