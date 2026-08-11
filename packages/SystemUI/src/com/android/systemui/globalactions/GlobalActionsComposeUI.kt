@@ -498,14 +498,41 @@ fun GlobalActionsScreen(
         currentView = GlobalActionsView.CONFIRMATION
     }
 
-    val handleRestartOptionClick: (RestartOption) -> Unit = { option ->
-        confirmationTitle = option.label
-        confirmationMessage = option.description
-        confirmationIcon = option.icon
-        confirmationColor = VividRed
-        pendingConfirmationAction = { performReboot(option.reason) }
-        currentView = GlobalActionsView.CONFIRMATION
+
+val handleRestartOptionClick: (RestartOption) -> Unit = { option ->
+    val restartAction = when (option.reason) {
+        null -> actions.firstOrNull {
+            it is GlobalActionsDialogLite.RestartAction
+        }
+
+        "recovery" -> restartActions.firstOrNull {
+            it is GlobalActionsDialogLite.RestartRecoveryAction
+        }
+
+        "bootloader" -> restartActions.firstOrNull {
+            it is GlobalActionsDialogLite.RestartBootloaderAction
+        }
+
+        "fastboot" -> restartActions.firstOrNull {
+            it is GlobalActionsDialogLite.RestartFastbootAction
+        }
+
+        else -> null
     }
+
+    confirmationTitle = option.label
+    confirmationMessage = option.description
+    confirmationIcon = option.icon
+    confirmationColor = VividRed
+
+    pendingConfirmationAction = {
+        if (restartAction != null) {
+            onActionClick(restartAction)
+        }
+    }
+
+    currentView = GlobalActionsView.CONFIRMATION
+}
 
     val handleDismiss: () -> Unit = {
         when (currentView) {
