@@ -3470,7 +3470,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mAppSwitchLongPressAction = Action.fromIntSafe(res.getInteger(
                 org.lineageos.platform.internal.R.integer.config_longPressOnAppSwitchBehavior));
         mAppSwitchDoubleTapAction = Action.LAST_APP;
-        mCornerLongSwipeAction = Action.SEARCH;
+        mCornerLongSwipeAction = Action.SYSTEM_POPUP;
         mEdgeLongSwipeAction = Action.NOTHING;
 
         mBackLongPressAction = Action.fromSettings(resolver,
