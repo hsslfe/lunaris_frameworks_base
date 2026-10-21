@@ -470,14 +470,18 @@ fun GlobalActionsScreen(
 
     val handleRestartDeviceChosen: () -> Unit = {
         val restartAction = actions.firstOrNull { it is GlobalActionsDialogLite.RestartAction }
-        confirmationTitle = "Restart"
-        confirmationMessage = "Slide to restart"
-        confirmationIcon = Icons.Rounded.Refresh
-        confirmationColor = VividRed
-        pendingConfirmationAction = {
-            if (restartAction != null) onActionClick(restartAction) else performReboot(null)
-         }
-        currentView = GlobalActionsView.CONFIRMATION
+        if (isAdvancedRestartPossible(context)) {
+            currentView = GlobalActionsView.RESTART_OPTIONS
+        } else {
+            confirmationTitle = "Restart"
+            confirmationMessage = "Slide to restart"
+            confirmationIcon = Icons.Rounded.Refresh
+            confirmationColor = VividRed
+            pendingConfirmationAction = {
+                if (restartAction != null) onActionClick(restartAction) else performReboot(null)
+            }
+            currentView = GlobalActionsView.CONFIRMATION
+        }
     }
 
     val handleRestartRecoveryChosen: () -> Unit = {
@@ -512,6 +516,8 @@ fun GlobalActionsScreen(
                     confirmationTitle == "Restart Direct" -> GlobalActionsView.GRID
                     confirmationTitle == "Restart SystemUI" -> GlobalActionsView.RESTART_CHOICE
                     confirmationTitle == "Recovery" -> GlobalActionsView.RESTART_CHOICE
+                    confirmationTitle == "Restart" && isAdvancedRestartPossible(context) ->
+                        GlobalActionsView.RESTART_OPTIONS
                     confirmationTitle == "Restart" -> GlobalActionsView.RESTART_CHOICE
                     isAdvancedRestartPossible(context) -> GlobalActionsView.RESTART_OPTIONS
                     else -> GlobalActionsView.GRID
