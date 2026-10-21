@@ -488,14 +488,14 @@ class SystemIconsPopupController(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) { detectTapGestures { onDismiss() } },
-            contentAlignment = if (atBottom) Alignment.BottomCenter else Alignment.TopEnd
+                contentAlignment = if (atBottom) Alignment.BottomCenter else Alignment.TopCenter
         ) {
             Column(
                 modifier = Modifier
                     .padding(
                         top = if (atBottom) 0.dp else 8.dp,
                         bottom = if (atBottom) 8.dp else 0.dp,
-                        end = if (atBottom) 0.dp else 16.dp
+                        end = 0.dp
                     )
                     .graphicsLayer {
                         translationX = offsetX.value.dp.toPx()
@@ -509,7 +509,7 @@ class SystemIconsPopupController(
                             TransformOrigin(1f, 0f)
                         }
                     },
-                horizontalAlignment = if (atBottom) Alignment.CenterHorizontally else Alignment.End
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
                     modifier = Modifier
@@ -679,14 +679,14 @@ class SystemIconsPopupController(
 
         Box(
             modifier = Modifier.fillMaxSize(),
-            contentAlignment = if (atBottom) Alignment.BottomCenter else Alignment.TopEnd
+            contentAlignment = if (atBottom) Alignment.BottomCenter else Alignment.TopCenter
         ) {
             Column(
                 modifier = Modifier
                     .padding(
                         top = if (atBottom) 0.dp else 8.dp,
                         bottom = if (atBottom) 8.dp else 0.dp,
-                        end = if (atBottom) 0.dp else 16.dp
+                        end = 0.dp
                     )
                     .graphicsLayer {
                         translationX = offsetX.value.dp.toPx()
@@ -700,10 +700,7 @@ class SystemIconsPopupController(
                             TransformOrigin(1f, 0f)
                         }
                     },
-                horizontalAlignment =
-                    if (atBottom)
-                        Alignment.CenterHorizontally
-                    else Alignment.End
+                   horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
                     modifier = Modifier
