@@ -265,7 +265,7 @@ public final class HapticFeedbackVibrationProvider {
 
             case HapticFeedbackConstants.REJECT:
             case HapticFeedbackConstants.BIOMETRIC_REJECT:
-                return VibrationEffect.get(VibrationEffect.EFFECT_DOUBLE_CLICK);
+                return VibrationEffect.get(VibrationEffect.EFFECT_CLICK);
 
             case HapticFeedbackConstants.SAFE_MODE_ENABLED:
                 // safe mode effect is not customized by the input source.
