@@ -297,6 +297,9 @@ class NetworkSpeedView @JvmOverloads constructor(
 
     private fun updateTextLayout(singleLine: Boolean) {
         speedText.orientation = if (singleLine) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        // Reduce the right-side gap by 1 dp only for the double-line display.
+        speedText.translationX = if (singleLine) 0f else TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 1f, resources.displayMetrics)
         speedNumber?.setTextSize(TypedValue.COMPLEX_UNIT_PX, resources.getDimension(
             if (singleLine) R.dimen.network_speed_single_line_text_size
             else R.dimen.network_speed_text_size))
