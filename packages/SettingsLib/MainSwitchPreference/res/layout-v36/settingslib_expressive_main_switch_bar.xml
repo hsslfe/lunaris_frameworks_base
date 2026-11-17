@@ -64,7 +64,7 @@
                 android:visibility="gone" />
         </RelativeLayout>
 
-        <com.android.settingslib.widget.SwitchThumbIconSwitch
+        <com.google.android.material.materialswitch.MaterialSwitch
             android:theme="@style/Theme.Material3.DynamicColors.DayNight"
             android:id="@android:id/switch_widget"
             style="@style/SettingslibMainSwitchStyle.Expressive" />

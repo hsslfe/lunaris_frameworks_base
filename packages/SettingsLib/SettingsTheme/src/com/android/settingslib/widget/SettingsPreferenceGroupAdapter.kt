@@ -93,7 +93,6 @@ open class SettingsPreferenceGroupAdapter(preferenceGroup: PreferenceGroup) :
         super.onBindViewHolder(holder, position)
 
         if (SettingsThemeHelper.isExpressiveTheme(holder.itemView.context)) {
-            SwitchThumbIconDrawable.bind(holder.itemView)
             updateBackground(holder, position)
         }
     }
