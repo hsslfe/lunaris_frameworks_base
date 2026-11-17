@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -39,125 +40,25 @@ internal fun LunarisBarContentTheme(
     content: @Composable () -> Unit,
 ) {
     val state = LocalLunarisBarState.current
-    var settings = state.settings
     val inherited = LocalLunarisBarColors.current
     val card = (model as? PopupContentModel.Utility)?.card
     val media = (model as? PopupContentModel.Media)?.model
     val suffix = if (inherited.dark) "night" else "day"
     val feature = model.lunarisBarFeature(chipId)?.let { "feature_$it" }
-    if (media != null) {
-        for (key in
-            listOf("media_palette", "media_mini_left_palette", "media_mini_right_palette")) {
-            settings =
-                settings.with(
-                    key,
-                    settings.integer(
-                        "${key}_$suffix",
-                        settings.integer(key, if (key == "media_palette") 4 else 0, 0, 20),
-                        0,
-                        20,
-                    ),
-                )
-        }
-        for (key in
-            listOf(
-                "media_background_color",
-                "media_foreground_color",
-                "media_accent_color",
-                "media_mini_left_background",
-                "media_mini_left_foreground",
-                "media_mini_right_background",
-                "media_mini_right_foreground",
-            )) {
-            val fallback =
-                if (key.endsWith("background") || key == "media_background_color") inherited.surface
-                else inherited.content
-            settings =
-                settings.with(
-                    key,
-                    settings.integer(
-                        "${key}_$suffix",
-                        settings.integer(key, fallback.toArgb(), Int.MIN_VALUE, Int.MAX_VALUE),
-                        Int.MIN_VALUE,
-                        Int.MAX_VALUE,
-                    ),
-                )
-        }
-    }
-    if (feature != null) {
-        for (key in
-            listOf(
-                "mini_shape",
-                "right_shape",
-                "card_icon_shape",
-                "card_button_shape",
-                "left_content",
-                "right_content",
-                "left_palette",
-                "right_palette",
-                "progress_palette",
-                "track_palette",
-            )) {
-            val fallback =
-                when (key) {
-                    "mini_shape",
-                    "right_shape" -> settings.integer("mini_shape", 2, 0, 31)
-                    "card_icon_shape" -> settings.integer(key, 2, 0, 31)
-                    "card_button_shape" -> settings.integer(key, 20, 0, 31)
-                    "left_palette",
-                    "right_palette" -> -1
-                    "progress_palette" -> 5
-                    "track_palette" -> 2
-                    else -> 0
-                }
-            val value =
-                if (key in listOf("left_palette", "right_palette"))
-                    settings.integer(
-                        "${feature}_${key}_$suffix",
-                        settings.integer("${feature}_$key", 0, 0, 21),
-                        0,
-                        21,
-                    ) - 1
-                else if (
-                    key in
-                        listOf("mini_shape", "right_shape", "card_icon_shape", "card_button_shape")
-                )
-                    settings.integer("${feature}_$key", 0, 0, 32).let {
-                        if (it == 0) fallback else it - 1
-                    }
-                else if (key.endsWith("palette"))
-                    settings.integer(
-                        "${feature}_${key}_$suffix",
-                        settings.integer("${feature}_$key", fallback, 0, 20),
-                        0,
-                        20,
-                    )
-                else settings.integer("${feature}_$key", fallback, 0, 31)
-            settings = settings.with(key, value)
-        }
-        for (part in listOf("left", "right", "progress", "track")) {
-            for (role in listOf("background", "foreground")) {
-                val key = "${part}_$role"
-                val fallback =
-                    if (role == "background") inherited.miniSurface else inherited.miniContent
-                settings =
-                    settings.with(
-                        key,
-                        settings.integer(
-                            "${feature}_${key}_$suffix",
-                            fallback.toArgb(),
-                            Int.MIN_VALUE,
-                            Int.MAX_VALUE,
-                        ),
-                    )
-            }
-        }
-        settings =
-            settings.with(
-                "haptics",
-                settings.isHapticsEnabled && settings.enabled("${feature}_haptics", true),
+    val settings =
+        remember(state.settings, inherited, card, media != null, feature) {
+            lunarisBarContentSettings(
+                settings = state.settings,
+                media = media != null,
+                feature = feature,
+                card = card,
+                dark = inherited.dark,
+                surface = inherited.surface.toArgb(),
+                content = inherited.content.toArgb(),
+                miniSurface = inherited.miniSurface.toArgb(),
+                miniContent = inherited.miniContent.toArgb(),
             )
-    }
+        }
     val artwork = (media?.artworkIcon as? Icon.Loaded)?.drawable
     val artworkColor by
         produceState<Color?>(null, artwork) {
@@ -278,8 +179,7 @@ internal fun LunarisBarContentTheme(
         }
     val expanded =
         if (media != null && settings.enabled("media_artwork_colors", false) && cover != null) cover
-        else if (palette >= 0) selected
-        else inherited.surface to inherited.content
+        else if (palette >= 0) selected else inherited.surface to inherited.content
     val mini =
         if (media != null && settings.enabled("media_mini_artwork_colors", false) && cover != null)
             cover
@@ -310,39 +210,6 @@ internal fun LunarisBarContentTheme(
                 else if (palette >= 0) selected.second else inherited.accent,
             outline = expanded.second.copy(alpha = if (inherited.dark) 0.22f else 0.14f),
         )
-    if (card != null) {
-        settings =
-            settings
-                .with(
-                    "card_icon_shape",
-                    card.integer("icon_shape", settings.integer("card_icon_shape", 2, 0, 31), 0, 31),
-                )
-                .with(
-                    "card_button_shape",
-                    card.integer(
-                        "toggle_shape",
-                        settings.integer("card_button_shape", 20, 0, 31),
-                        0,
-                        31,
-                    ),
-                )
-                .with(
-                    "mini_shape",
-                    card.integer("icon_shape", settings.integer("mini_shape", 2, 0, 31), 0, 31),
-                )
-    }
-    if (card != null)
-        settings =
-            settings.with(
-                "haptics",
-                settings.isHapticsEnabled && card.enabled("card_haptics", true),
-            )
-    if (media != null)
-        settings =
-            settings.with(
-                "haptics",
-                settings.isHapticsEnabled && settings.enabled("media_haptics", true),
-            )
     val scheme =
         MaterialTheme.colorScheme.copy(
             surface = colors.surface,

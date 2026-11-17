@@ -142,6 +142,20 @@ public final class LunarisBarSettings {
         }
     }
 
+    /** Applies a group of overrides to a single independent copy of these settings. */
+    public LunarisBarSettings withValues(Map<String, ?> overrides) {
+        if (overrides.isEmpty()) return this;
+        try {
+            JSONObject copy = new JSONObject(values.toString());
+            for (Map.Entry<String, ?> entry : overrides.entrySet()) {
+                copy.put(entry.getKey(), entry.getValue());
+            }
+            return new LunarisBarSettings(copy);
+        } catch (JSONException e) {
+            return this;
+        }
+    }
+
     public static int screenWidth(Context context) {
         return Math.round(context.getResources().getConfiguration().windowConfiguration
                 .getMaxBounds().width() / context.getResources().getDisplayMetrics().density);
@@ -282,7 +296,7 @@ public final class LunarisBarSettings {
 
     @Override
     public boolean equals(Object other) {
-        return other instanceof LunarisBarSettings
+        return this == other || other instanceof LunarisBarSettings
                 && toString().equals(other.toString());
     }
 
@@ -344,7 +358,8 @@ public final class LunarisBarSettings {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof Card && values.toString().equals(other.toString());
+            return this == other || other instanceof Card
+                    && values.toString().equals(other.toString());
         }
 
         @Override
