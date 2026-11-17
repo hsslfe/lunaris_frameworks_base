@@ -73,6 +73,11 @@ class NetworkSpeedView @JvmOverloads constructor(
         super.onFinishInflate()
         speedNumber = findViewById(R.id.number)
         speedUnit = findViewById(R.id.unit)
+        // Include glyph overhangs in wrap-content measurement, including in Compose QS hosts.
+        listOfNotNull(speedNumber, speedUnit).forEach { text ->
+            text.setUseBoundsForWidth(true)
+            text.setShiftDrawingOffsetForStartOverhang(true)
+        }
         speedText = findViewById(R.id.network_speed_text)
         initDotView()
     }
