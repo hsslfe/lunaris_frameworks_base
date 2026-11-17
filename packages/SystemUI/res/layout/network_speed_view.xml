@@ -31,9 +31,10 @@
             android:id="@+id/unit"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_gravity="center"
             android:textAppearance="@style/TextAppearance.StatusBar.Default"
             android:textSize="@dimen/network_speed_unit_text_size"
-            android:gravity="end|center_vertical"
+            android:gravity="center"
             android:singleLine="true"
             android:includeFontPadding="false"
             android:importantForAccessibility="no" />
