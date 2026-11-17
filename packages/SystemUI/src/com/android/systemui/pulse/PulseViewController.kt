@@ -21,6 +21,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.media.session.PlaybackState
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -77,6 +78,12 @@ class PulseViewController @Inject constructor(
     // Keep the lockscreen view attached: detaching a PulseView cancels its engine.
     private var unlockedView: PulseView? = null
     private var mediaColor: Int? = null
+    private var mediaTrack: Pair<String, String>? = null
+    private var unlockedCaptureRefreshJob: Job? = null
+    private var unlockedCaptureMonitorJob: Job? = null
+    private var lastUnlockedDataUptime = 0L
+    private var lastUnlockedCaptureRestartUptime = 0L
+    private var unlockedCaptureRetryDelayMs = UNLOCKED_CAPTURE_RETRY_DELAY_MS
 
     private val audioProcessor: PulseAudioDataProcessor =
         PulseAudioDataProcessor(context).apply {
@@ -301,16 +308,34 @@ class PulseViewController @Inject constructor(
         }
     }
 
+    @Suppress("DEPRECATION") // TYPE_SYSTEM_OVERLAY is intentional for this internal system window.
     private fun showUnlockedView(): Boolean {
         if (unlockedView != null) return true
         val pulseView = PulseView(context).apply {
             setVisibility(false, animate = false)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        pulseView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            private var attachedBefore = false
+
+            override fun onViewAttachedToWindow(v: View) {
+                if (attachedBefore && unlockedView === pulseView && !destroyed) {
+                    // A window reattachment must not reuse the engine cancelled on detach.
+                    pulseView.initialize(settingsRepository)
+                    pulseView.onCaptureModeChanged(audioProcessor.captureMode)
+                    mediaColor?.let { pulseView.onMediaColorsChanged(it) }
+                    scheduleUnlockedCaptureRefresh()
+                }
+                attachedBefore = true
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {}
+        })
         val params = LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.MATCH_PARENT,
-            LayoutParams.TYPE_SECURE_SYSTEM_OVERLAY,
+            // Above apps, but below navigation buttons and the gesture handle.
+            LayoutParams.TYPE_SYSTEM_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCHABLE or
                 LayoutParams.FLAG_NOT_TOUCH_MODAL or LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 LayoutParams.FLAG_HARDWARE_ACCELERATED,
@@ -334,10 +359,15 @@ class PulseViewController @Inject constructor(
         pulseView.onCaptureModeChanged(audioProcessor.captureMode)
         mediaColor?.let { pulseView.onMediaColorsChanged(it) }
         pulseView.setVisibility(true, animate = true, durationMs = PULSE_FADE_IN_DURATION_MS)
+        startUnlockedCaptureMonitor(pulseView)
         return true
     }
 
     private fun hideUnlockedView() {
+        unlockedCaptureRefreshJob?.cancel()
+        unlockedCaptureRefreshJob = null
+        unlockedCaptureMonitorJob?.cancel()
+        unlockedCaptureMonitorJob = null
         val pulseView = unlockedView ?: return
         unlockedView = null
         pulseView.setVisibility(false, animate = false)
@@ -345,6 +375,58 @@ class PulseViewController @Inject constructor(
             windowManager.removeViewImmediate(pulseView)
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "Unlocked Pulse window was already removed", e)
+        }
+    }
+
+    private fun canRefreshUnlockedCapture(): Boolean =
+        unlockedView != null && pulseRunning && shouldShowPulse() && shouldShowUnlockedPulse()
+
+    private fun scheduleUnlockedCaptureRefresh() {
+        if (!canRefreshUnlockedCapture()) return
+        unlockedCaptureRefreshJob?.cancel()
+        unlockedCaptureRefreshJob = mainScope.launch {
+            // Metadata/album color can arrive before the next audio session is ready.
+            delay(UNLOCKED_CAPTURE_REFRESH_DELAY_MS)
+            if (canRefreshUnlockedCapture()) {
+                unlockedCaptureRetryDelayMs = UNLOCKED_CAPTURE_RETRY_DELAY_MS
+                restartUnlockedCapture()
+            }
+        }
+    }
+
+    private fun restartUnlockedCapture() {
+        if (!canRefreshUnlockedCapture()) return
+        // startCapture alone is a no-op when a stale Visualizer still reports itself active.
+        audioProcessor.stopCapture()
+        audioProcessor.startCapture()
+        lastUnlockedCaptureRestartUptime = SystemClock.uptimeMillis()
+        lastUnlockedDataUptime = lastUnlockedCaptureRestartUptime
+    }
+
+    private fun startUnlockedCaptureMonitor(pulseView: PulseView) {
+        unlockedCaptureMonitorJob?.cancel()
+        lastUnlockedDataUptime = SystemClock.uptimeMillis()
+        lastUnlockedCaptureRestartUptime = lastUnlockedDataUptime
+        unlockedCaptureRetryDelayMs = UNLOCKED_CAPTURE_RETRY_DELAY_MS
+        unlockedCaptureMonitorJob = mainScope.launch {
+            while (unlockedView === pulseView && canRefreshUnlockedCapture()) {
+                delay(UNLOCKED_CAPTURE_CHECK_INTERVAL_MS)
+                if (unlockedView !== pulseView || !canRefreshUnlockedCapture()) break
+                if (!pulseView.isAttachedToWindow) {
+                    stopPulseImmediately()
+                    updateState()
+                    break
+                }
+                val now = SystemClock.uptimeMillis()
+                if (unlockedCaptureRefreshJob?.isActive != true &&
+                    now - lastUnlockedDataUptime >= UNLOCKED_CAPTURE_STALL_TIMEOUT_MS &&
+                    now - lastUnlockedCaptureRestartUptime >= unlockedCaptureRetryDelayMs) {
+                    restartUnlockedCapture()
+                    // Unsupported/offloaded streams must not cause rapid capture retries.
+                    unlockedCaptureRetryDelayMs = (unlockedCaptureRetryDelayMs * 2)
+                        .coerceAtMost(UNLOCKED_CAPTURE_MAX_RETRY_DELAY_MS)
+                }
+            }
         }
     }
 
@@ -358,6 +440,10 @@ class PulseViewController @Inject constructor(
     override fun onDataUpdate(data: PulseData) {
         mainScope.launch {
             if (destroyed) return@launch
+            if (unlockedView != null && data.isDataValid) {
+                lastUnlockedDataUptime = SystemClock.uptimeMillis()
+                unlockedCaptureRetryDelayMs = UNLOCKED_CAPTURE_RETRY_DELAY_MS
+            }
             if (pulseEnabled && hapticsMode > 0 && (pulseRunning || hapticsMode > 1) &&
                 captureMode == PulseAudioDataProcessor.CaptureMode.FFT) {
                 bassHaptics.process(data.fftBytes)
@@ -375,9 +461,21 @@ class PulseViewController @Inject constructor(
 
     override fun onMediaColorsChanged(color: Int) {
         mainScope.launch {
+            val changed = mediaColor != color
             mediaColor = color
             view.onMediaColorsChanged(color)
             unlockedView?.onMediaColorsChanged(color)
+            if (changed) scheduleUnlockedCaptureRefresh()
+        }
+    }
+
+    override fun onMetadataChanged(track: String, artist: String) {
+        mainScope.launch {
+            val nextTrack = track to artist
+            if (mediaTrack != nextTrack) {
+                mediaTrack = nextTrack
+                scheduleUnlockedCaptureRefresh()
+            }
         }
     }
 
@@ -458,6 +556,7 @@ class PulseViewController @Inject constructor(
             stopPulseImmediately()
             audioProcessor.stopCapture()
             mediaColor = null
+            mediaTrack = null
             bassHaptics.reset()
             settingsRepository.invalidateCache()
         }
@@ -480,6 +579,11 @@ class PulseViewController @Inject constructor(
 
     companion object {
         private const val TAG = "PulseViewController"
+        private const val UNLOCKED_CAPTURE_REFRESH_DELAY_MS = 300L
+        private const val UNLOCKED_CAPTURE_CHECK_INTERVAL_MS = 1000L
+        private const val UNLOCKED_CAPTURE_STALL_TIMEOUT_MS = 2000L
+        private const val UNLOCKED_CAPTURE_RETRY_DELAY_MS = 2000L
+        private const val UNLOCKED_CAPTURE_MAX_RETRY_DELAY_MS = 30000L
 
         @Volatile
         private var INSTANCE: PulseViewController? = null
