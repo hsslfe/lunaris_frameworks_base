@@ -301,6 +301,7 @@ class PulseViewController @Inject constructor(
         }
     }
 
+    @Suppress("DEPRECATION") // TYPE_SYSTEM_OVERLAY is intentional for this internal system window.
     private fun showUnlockedView(): Boolean {
         if (unlockedView != null) return true
         val pulseView = PulseView(context).apply {
@@ -310,7 +311,8 @@ class PulseViewController @Inject constructor(
         val params = LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.MATCH_PARENT,
-            LayoutParams.TYPE_SECURE_SYSTEM_OVERLAY,
+            // Above apps, but below navigation buttons and the gesture handle.
+            LayoutParams.TYPE_SYSTEM_OVERLAY,
             LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCHABLE or
                 LayoutParams.FLAG_NOT_TOUCH_MODAL or LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 LayoutParams.FLAG_HARDWARE_ACCELERATED,
