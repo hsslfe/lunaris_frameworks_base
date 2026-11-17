@@ -527,10 +527,12 @@ public class KeyguardViewMediator implements CoreStartable,
     private boolean mIsKeyguardExitAnimationCanceled = false;
 
     private SoundPool mLockSounds;
+    private SoundPool mTrustedSounds;
     private int mLockSoundId;
     private int mUnlockSoundId;
     private int mTrustedSoundId;
     private int mLockSoundStreamId;
+    private int mTrustedSoundStreamId;
     private final float mPowerButtonY;
     private final float mWindowCornerRadius;
 
@@ -551,9 +553,9 @@ public class KeyguardViewMediator implements CoreStartable,
     private Animation mHideAnimation;
 
     /**
-     * The volume applied to the lock/unlock sounds.
+     * The volume applied to the trusted sound. Lock/unlock sounds use media volume directly.
      */
-    private float mLockSoundVolume;
+    private float mTrustedSoundVolume;
 
     /**
      * For managing external displays
@@ -1764,6 +1766,15 @@ public class KeyguardViewMediator implements CoreStartable,
                 .setMaxStreams(1)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build())
+                .build();
+        // Keep the trusted-device chime on the system stream with its existing attenuation.
+        mTrustedSounds = new SoundPool.Builder()
+                .setMaxStreams(1)
+                .setAudioAttributes(
+                        new AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .build())
@@ -1784,15 +1795,15 @@ public class KeyguardViewMediator implements CoreStartable,
         }
         soundPath = Settings.Global.getString(cr, Settings.Global.TRUSTED_SOUND);
         if (soundPath != null) {
-            mTrustedSoundId = mLockSounds.load(soundPath, 1);
+            mTrustedSoundId = mTrustedSounds.load(soundPath, 1);
         }
         if (soundPath == null || mTrustedSoundId == 0) {
             Log.w(TAG, "failed to load trusted sound from " + soundPath);
         }
 
-        int lockSoundDefaultAttenuation = mContext.getResources().getInteger(
+        int trustedSoundDefaultAttenuation = mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_lockSoundVolumeDb);
-        mLockSoundVolume = (float)Math.pow(10, (float)lockSoundDefaultAttenuation/20);
+        mTrustedSoundVolume = (float) Math.pow(10, trustedSoundDefaultAttenuation / 20.0f);
 
         mHideAnimation = AnimationUtils.loadAnimation(mContext,
                 com.android.internal.R.anim.lock_screen_behind_enter);
@@ -3044,16 +3055,15 @@ public class KeyguardViewMediator implements CoreStartable,
     }
 
     private void playSounds(boolean locked) {
-        playSound(locked ? mLockSoundId : mUnlockSoundId);
+        playSound(locked ? mLockSoundId : mUnlockSoundId, false /* trusted */);
     }
 
-    private void playSound(int soundId) {
+    private void playSound(int soundId, boolean trusted) {
         if (soundId == 0) return;
         int lockscreenSoundsEnabled = mSystemSettings.getIntForUser(LOCKSCREEN_SOUNDS_ENABLED, 1,
                 mSelectedUserInteractor.getSelectedUserId());
         if (lockscreenSoundsEnabled == 1) {
 
-            mLockSounds.stop(mLockSoundStreamId);
             // Init mAudioManager
             if (mAudioManager == null) {
                 mAudioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
@@ -3062,13 +3072,26 @@ public class KeyguardViewMediator implements CoreStartable,
             }
 
             mUiBgExecutor.execute(() -> {
-                // If the stream is muted, don't play the sound
-                if (mAudioManager.isStreamMute(mUiSoundsStreamType)) return;
+                // Stop either previous chime before starting another. Keep playback on the
+                // serial UI background executor so rapid lock/unlock events cannot overlap.
+                mLockSounds.stop(mLockSoundStreamId);
+                mTrustedSounds.stop(mTrustedSoundStreamId);
 
-                int id = mLockSounds.play(soundId,
-                        mLockSoundVolume, mLockSoundVolume, 1/*priority*/, 0/*loop*/, 1.0f/*rate*/);
-                synchronized (this) {
-                    mLockSoundStreamId = id;
+                // Preserve silent/vibrate and DND suppression for these UI sounds, even though
+                // lock/unlock playback now follows the media stream's volume and routing.
+                if (mAudioManager.isStreamMute(mUiSoundsStreamType)
+                        || (!trusted && mAudioManager.isStreamMute(AudioManager.STREAM_SYSTEM))) {
+                    return;
+                }
+
+                if (trusted) {
+                    mTrustedSoundStreamId = mTrustedSounds.play(soundId,
+                            mTrustedSoundVolume, mTrustedSoundVolume,
+                            1/*priority*/, 0/*loop*/, 1.0f/*rate*/);
+                } else {
+                    // Audio policy applies media volume; avoid attenuating the sample again.
+                    mLockSoundStreamId = mLockSounds.play(soundId,
+                            1.0f, 1.0f, 1/*priority*/, 0/*loop*/, 1.0f/*rate*/);
                 }
             });
 
@@ -3076,7 +3099,7 @@ public class KeyguardViewMediator implements CoreStartable,
     }
 
     private void playTrustedSound() {
-        playSound(mTrustedSoundId);
+        playSound(mTrustedSoundId, true /* trusted */);
     }
 
     private void updateActivityLockScreenState(boolean showing, boolean aodShowing, String reason) {
