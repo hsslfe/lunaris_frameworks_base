@@ -892,10 +892,16 @@ constructor(
             lockscreenSmartspace?.visibility = View.INVISIBLE
         }
 
-        // As soon as the shade starts animating out of the way, start the canned unlock animation,
-        // which will finish keyguard exit when it completes. The in-window animations in the
-        // Launcher window will end on their own.
-        if (openingWallpaperTargets?.isNotEmpty() == true) {
+        // On a direct screen-off fingerprint unlock, the lockscreen wallpaper must not
+        // remain visible while Launcher draws its own in-window reveal. The wallpaper
+        // crossfade belongs to regular screen-on unlocks, not wake-and-unlock.
+        val directWakeAndUnlock =
+            biometricUnlockControllerLazy.get().mode ==
+                BiometricUnlockController.MODE_WAKE_AND_UNLOCK
+        if (directWakeAndUnlock) {
+            setWallpaperAppearAmount(1f, openingWallpaperTargets)
+            setWallpaperAppearAmount(0f, closingWallpaperTargets)
+        } else if (openingWallpaperTargets?.isNotEmpty() == true) {
             fadeOutWallpaper()
         }
 
@@ -913,7 +919,15 @@ constructor(
                     return@postDelayed
                 }
 
-                if (openingWallpaperTargets?.isNotEmpty() == true) {
+                if (directWakeAndUnlock) {
+                    // Launcher animates its icons independently of the keyguard remote
+                    // animation. Release the keyguard surface without waiting for the
+                    // wallpaper fade-in, which was showing a stale lockscreen frame.
+                    Log.d("LunarisUnlockTrace", "SYSUI_FAST_WAKE_UNLOCK_FINISH")
+                    keyguardViewMediator
+                        .get()
+                        .exitKeyguardAndFinishSurfaceBehindRemoteAnimation(false /* cancelled */)
+                } else if (openingWallpaperTargets?.isNotEmpty() == true) {
                     fadeInWallpaper()
                     hideKeyguardViewAfterRemoteAnimation()
                 } else {
