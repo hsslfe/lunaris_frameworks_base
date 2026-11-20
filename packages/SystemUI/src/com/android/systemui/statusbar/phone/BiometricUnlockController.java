@@ -550,6 +550,11 @@ public class BiometricUnlockController extends KeyguardUpdateMonitorCallback imp
         mLogger.logStartWakeAndUnlock(mode);
         boolean wasDeviceInteractive = mUpdateMonitor.isDeviceInteractive();
         mMode = mode;
+        android.util.Log.d("LunarisUnlockTrace",
+                "BIO_START mode=" + mode
+                        + " interactive=" + wasDeviceInteractive
+                        + " dreaming=" + mUpdateMonitor.isDreaming()
+                        + " newDozing=" + com.android.systemui.Flags.newDozingKeyguardStates());
         mHasScreenTurnedOnSinceAuthenticating = false;
         if (mMode == MODE_WAKE_AND_UNLOCK_PULSING) {
             // If we are waking the device up while we are pulsing the clock and the
@@ -561,6 +566,9 @@ public class BiometricUnlockController extends KeyguardUpdateMonitorCallback imp
         // During wake and unlock, we need to draw black before waking up to avoid abrupt
         // brightness changes due to display state transitions.
         Runnable wakeUp = ()-> {
+            android.util.Log.d("LunarisUnlockTrace",
+                    "BIO_WAKE_UP mode=" + mMode
+                            + " wasInteractive=" + wasDeviceInteractive);
             if (!wasDeviceInteractive || mUpdateMonitor.isDreaming()) {
                 mLogger.i("bio wakelock: Authenticated, waking up...");
                 mPowerManager.wakeUp(
@@ -616,6 +624,8 @@ public class BiometricUnlockController extends KeyguardUpdateMonitorCallback imp
                 // Notify the interactor first, to prevent race conditions with the screen waking up
                 // that would show a flicker of the lockscreen on DOZING->GONE
                 mBiometricUnlockInteractor.setBiometricUnlockState(mode, biometricUnlockSource);
+                android.util.Log.d("LunarisUnlockTrace",
+                        "BIO_STATE_PUBLISHED mode=" + mode);
                 mKeyguardViewMediator.onWakeAndUnlocking(wakeInKeyguard);
                 Trace.endSection();
                 break;

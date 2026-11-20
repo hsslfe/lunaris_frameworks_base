@@ -494,6 +494,10 @@ constructor(
     }
 
     override fun onStartedWakingUp() {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_WAKING keyguardShowing=${keyguardStateController.isShowing}" +
+                " wakeAndUnlock=${biometricUnlockControllerLazy.get().isWakeAndUnlock}" +
+                " dozing=${statusBarStateController.isDozing}")
         cancelWallpaperZoomAnimator()
         hasPendingScreenOnWallpaperZoom = keyguardStateController.isShowing
         if (hasPendingScreenOnWallpaperZoom) {
@@ -506,6 +510,9 @@ constructor(
     }
 
     override fun onFinishedWakingUp() {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_WAKE_FINISHED keyguardShowing=${keyguardStateController.isShowing}" +
+                " pendingZoom=$hasPendingScreenOnWallpaperZoom")
         if (!hasPendingScreenOnWallpaperZoom) {
             return
         }
@@ -554,6 +561,10 @@ constructor(
      * changed.
      */
     override fun onKeyguardGoingAwayChanged() {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_GOING_AWAY goingAway=${keyguardStateController.isKeyguardGoingAway}" +
+                " wakeAndUnlock=${biometricUnlockControllerLazy.get().isWakeAndUnlock}" +
+                " launcherAnimation=$willUnlockWithInWindowLauncherAnimations")
         if (
             keyguardStateController.isKeyguardGoingAway &&
                 !statusBarStateController.leaveOpenOnKeyguardHide()
@@ -593,6 +604,9 @@ constructor(
      */
     fun prepareForInWindowLauncherAnimations() {
         willUnlockWithInWindowLauncherAnimations = canPerformInWindowLauncherAnimations()
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_PREPARE launcherAnimation=$willUnlockWithInWindowLauncherAnimations" +
+                " launcherConnected=${launcherUnlockController != null}")
 
         if (!willUnlockWithInWindowLauncherAnimations) {
             return
@@ -677,6 +691,11 @@ constructor(
         openingWallpaperTargets = openingWallpapers
         closingWallpaperTargets = closingWallpapers
         surfaceBehindRemoteAnimationStartTime = startTime
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_SURFACE_START requested=$requestedShowSurfaceBehindKeyguard" +
+                " wakeAndUnlock=${biometricUnlockControllerLazy.get().isWakeAndUnlock}" +
+                " launcherAnimation=$willUnlockWithInWindowLauncherAnimations" +
+                " openingWallpapers=${openingWallpapers.size}")
 
         // If we specifically requested that the surface behind be made visible (vs. it being made
         // visible because we're unlocking), then we're in the middle of a swipe-to-unlock touch
@@ -768,6 +787,9 @@ constructor(
      * by the dismiss amount via [onKeyguardDismissAmountChanged].
      */
     private fun playCannedUnlockAnimation() {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_PLAY_CANNED wakeAndUnlock=${biometricUnlockControllerLazy.get().isWakeAndUnlock}" +
+                " launcherAnimation=$willUnlockWithInWindowLauncherAnimations")
         Log.d(TAG, "playCannedUnlockAnimation")
         playingCannedUnlockAnimation = true
         hasPendingScreenOnWallpaperZoom = false
@@ -818,6 +840,10 @@ constructor(
      */
     @VisibleForTesting
     fun unlockToLauncherWithInWindowAnimations() {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_LAUNCHER_UNLOCK startDelay=${getLauncherUnlockRevealStartDelay()}" +
+                " wakeAndUnlock=${biometricUnlockControllerLazy.get().isWakeAndUnlock}" +
+                " openingWallpapers=${openingWallpaperTargets?.size ?: 0}")
         surfaceBehindAlpha = 1f
         setSurfaceBehindAppearAmount(1f, wallpapers = false)
 
@@ -1161,6 +1187,9 @@ constructor(
      * [KeyguardViewMediator.finishSurfaceBehindRemoteAnimation].
      */
     fun notifyFinishedKeyguardExitAnimation(showKeyguard: Boolean) {
+        Log.d("LunarisUnlockTrace",
+            "SYSUI_SURFACE_FINISH showKeyguard=$showKeyguard" +
+                " goingAway=${keyguardStateController.isKeyguardGoingAway}")
         // Cancel any pending actions.
         handler.removeCallbacksAndMessages(null)
 
