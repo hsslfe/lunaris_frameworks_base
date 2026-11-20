@@ -39,7 +39,6 @@ import com.android.systemui.statusbar.notification.stack.AnimationFilter;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
 import com.android.systemui.statusbar.notification.stack.ViewState;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
-import com.android.systemui.statusbar.policy.networkspeed.NetworkSpeedView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -58,6 +57,8 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
     // Max 8 status icons including battery
     private static final int MAX_ICONS = 7;
     private static final int MAX_DOTS = 1;
+    // Mirrors NetworkSpeedController.SLOT_NETWORK_SPEED without a Java-to-Kotlin dependency.
+    private static final String NETWORK_SPEED_SLOT = "network_speed";
 
     private int mDotPadding;
     private int mIconSpacing;
@@ -443,16 +444,21 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         return (StatusIconState) child.getTag(R.id.status_bar_view_state_tag);
     }
 
+    private static boolean isNetworkSpeedView(View child) {
+        return child instanceof StatusIconDisplayable
+                && NETWORK_SPEED_SLOT.equals(((StatusIconDisplayable) child).getSlot());
+    }
+
     private int getViewTotalMeasuredWidth(View child) {
         // NetworkSpeedView already includes its own padding in the measured width.
-        if (mFixQsNetworkSpeedWidth && child instanceof NetworkSpeedView) {
+        if (mFixQsNetworkSpeedWidth && isNetworkSpeedView(child)) {
             return child.getMeasuredWidth();
         }
         return child.getMeasuredWidth() + child.getPaddingStart() + child.getPaddingEnd();
     }
 
     private int getViewTotalWidth(View child) {
-        if (mFixQsNetworkSpeedWidth && child instanceof NetworkSpeedView) {
+        if (mFixQsNetworkSpeedWidth && isNetworkSpeedView(child)) {
             return child.getWidth();
         }
         return child.getWidth() + child.getPaddingStart() + child.getPaddingEnd();
@@ -486,7 +492,7 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
                 return;
             }
             StatusIconDisplayable icon = (StatusIconDisplayable) view;
-            boolean speedWidthChanged = view instanceof NetworkSpeedView
+            boolean speedWidthChanged = isNetworkSpeedView(view)
                     && lastWidth >= 0 && lastWidth != view.getWidth()
                     && icon.getVisibleState() == STATE_ICON && visibleState == STATE_ICON;
             AnimationProperties animationProperties = null;
