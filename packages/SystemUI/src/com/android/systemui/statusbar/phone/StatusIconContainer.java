@@ -39,6 +39,7 @@ import com.android.systemui.statusbar.notification.stack.AnimationFilter;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
 import com.android.systemui.statusbar.notification.stack.ViewState;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
+import com.android.systemui.statusbar.policy.networkspeed.NetworkSpeedView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -455,6 +456,7 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
 
         // How far we are from the end of the view actually is the most relevant for animation
         float distanceToViewEnd = -1;
+        private int lastWidth = -1;
 
         @Override
         public void applyToView(View view) {
@@ -469,6 +471,9 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
                 return;
             }
             StatusIconDisplayable icon = (StatusIconDisplayable) view;
+            boolean speedWidthChanged = view instanceof NetworkSpeedView
+                    && lastWidth >= 0 && lastWidth != view.getWidth()
+                    && icon.getVisibleState() == STATE_ICON && visibleState == STATE_ICON;
             AnimationProperties animationProperties = null;
             boolean animateVisibility = true;
 
@@ -494,7 +499,12 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
             }
 
             icon.setVisibleState(visibleState, animateVisibility);
-            if (animationProperties != null && !qsExpansionTransitioning) {
+            if (speedWidthChanged) {
+                // The text already has its new width. Animating from the old position can
+                // clip it against a wrap-content QS host until the X animation finishes.
+                cancelAnimations(view);
+                super.applyToView(view);
+            } else if (animationProperties != null && !qsExpansionTransitioning) {
                 animateTo(view, animationProperties);
             } else {
                 super.applyToView(view);
@@ -503,6 +513,7 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
             qsExpansionTransitioning = false;
             justAdded = false;
             distanceToViewEnd = currentDistanceToEnd;
+            lastWidth = view.getWidth();
 
         }
     }
