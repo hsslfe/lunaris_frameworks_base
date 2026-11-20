@@ -835,6 +835,15 @@ public class WindowManagerService extends IWindowManager.Stub
     final TrustedPresentationListenerController mTrustedPresentationListenerController =
             new TrustedPresentationListenerController();
 
+    private static final String LIQUID_GLASS_SETTING = "liquid_glass";
+    private static final String LIQUID_GLASS_STYLE_SETTING = "liquid_glass_style";
+    private static final String LIQUID_GLASS_REFRACTION_SETTING = "liquid_glass_refraction";
+    private static final String LIQUID_GLASS_PROPERTY = "persist.sys.evolution.liquid_glass";
+    private static final String LIQUID_GLASS_STYLE_PROPERTY =
+            "persist.sys.evolution.liquid_glass_style";
+    private static final String LIQUID_GLASS_REFRACTION_PROPERTY =
+            "persist.sys.evolution.liquid_glass_refraction";
+
     @VisibleForTesting
     final class SettingsObserver extends ContentObserver {
         private final Uri mDisplayInversionEnabledUri =
@@ -873,6 +882,11 @@ public class WindowManagerService extends IWindowManager.Stub
                 Settings.Global.MAXIMUM_OBSCURING_OPACITY_FOR_TOUCH);
         private final Uri mDevelopmentOverrideDesktopExperienceUri = Settings.Global.getUriFor(
                 Settings.Global.DEVELOPMENT_OVERRIDE_DESKTOP_EXPERIENCE_FEATURES);
+
+        private final Uri mLiquidGlassUri = Settings.Secure.getUriFor(LIQUID_GLASS_SETTING);
+        private final Uri mLiquidGlassStyleUri = Settings.Secure.getUriFor(LIQUID_GLASS_STYLE_SETTING);
+        private final Uri mLiquidGlassRefractionUri =
+                Settings.Secure.getUriFor(LIQUID_GLASS_REFRACTION_SETTING);
 
         public SettingsObserver() {
             super(new Handler());
@@ -917,11 +931,21 @@ public class WindowManagerService extends IWindowManager.Stub
                     UserHandle.USER_ALL);
             resolver.registerContentObserver(mDevelopmentOverrideDesktopExperienceUri, false, this,
                     UserHandle.USER_ALL);
+            resolver.registerContentObserver(mLiquidGlassUri, false, this, UserHandle.USER_ALL);
+            resolver.registerContentObserver(mLiquidGlassStyleUri, false, this, UserHandle.USER_ALL);
+            resolver.registerContentObserver(mLiquidGlassRefractionUri, false, this,
+                    UserHandle.USER_ALL);
         }
 
         @Override
         public void onChange(boolean selfChange, Uri uri) {
             if (uri == null) {
+                return;
+            }
+
+            if (mLiquidGlassUri.equals(uri) || mLiquidGlassStyleUri.equals(uri)
+                    || mLiquidGlassRefractionUri.equals(uri)) {
+                updateLiquidGlassProperties();
                 return;
             }
 
@@ -996,6 +1020,34 @@ public class WindowManagerService extends IWindowManager.Stub
             updateDisableSecureWindows();
             updateMagnifyIme();
             updateWallpaperZoomEnabled();
+            updateLiquidGlassProperties();
+        }
+
+        void postLiquidGlassUpdate() {
+            UiThread.getHandler().post(this::updateLiquidGlassProperties);
+        }
+
+        private void updateLiquidGlassProperties() {
+            synchronized (mGlobalLock) {
+                final ContentResolver resolver = mContext.getContentResolver();
+                final int userId = mCurrentUserId;
+                final boolean enabled = Settings.Secure.getIntForUser(resolver,
+                        LIQUID_GLASS_SETTING, 0, userId) != 0;
+                final int style = Settings.Secure.getIntForUser(resolver,
+                        LIQUID_GLASS_STYLE_SETTING, 0, userId);
+                final int refraction = Settings.Secure.getIntForUser(resolver,
+                        LIQUID_GLASS_REFRACTION_SETTING, 60, userId);
+                setLiquidGlassProperty(LIQUID_GLASS_STYLE_PROPERTY, style == 1 ? "cos" : "ios");
+                setLiquidGlassProperty(LIQUID_GLASS_REFRACTION_PROPERTY,
+                        Integer.toString(Math.max(0, Math.min(100, refraction))));
+                setLiquidGlassProperty(LIQUID_GLASS_PROPERTY, enabled ? "1" : "0");
+            }
+        }
+
+        private void setLiquidGlassProperty(String name, String value) {
+            if (!value.equals(SystemProperties.get(name))) {
+                SystemProperties.set(name, value);
+            }
         }
 
         void updateWallpaperZoomEnabled() {
@@ -4088,6 +4140,7 @@ public class WindowManagerService extends IWindowManager.Stub
             // is correctly re-evaluated and applied for the new user.
             mSettingsObserver.updateMagnifyIme();
             mSettingsObserver.updateWallpaperZoomEnabled();
+            mSettingsObserver.postLiquidGlassUpdate();
         }
     }
 

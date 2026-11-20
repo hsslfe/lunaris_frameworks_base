@@ -19,6 +19,8 @@
 
 #include <aidl/android/hardware/graphics/common/PixelFormat.h>
 #include <android-base/chrono_utils.h>
+#include <algorithm>
+
 #include <android/graphics/properties.h>
 #include <android/graphics/region.h>
 #include <android/gui/BnWindowInfosReportedListener.h>
@@ -896,10 +898,23 @@ static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj
 
     std::vector<BlurRegion> blurRegionVector;
     const int size = regionsLength;
-    float region[10];
+    constexpr int kGeometrySize = 10;
+    constexpr int kMaterialIndex = kGeometrySize;
     for (int i = 0; i < size; i++) {
         jfloatArray regionArray = (jfloatArray)env->GetObjectArrayElement(regions, i);
-        env->GetFloatArrayRegion(regionArray, 0, 10, region);
+        if (regionArray == nullptr) continue;
+        const jsize length = env->GetArrayLength(regionArray);
+        float region[kGeometrySize + 1] = {};
+        if (length < kGeometrySize) {
+            env->DeleteLocalRef(regionArray);
+            continue;
+        }
+        env->GetFloatArrayRegion(regionArray, 0, std::min<jsize>(length, kGeometrySize + 1),
+                                 region);
+        env->DeleteLocalRef(regionArray);
+        const float material = region[kMaterialIndex];
+        const int32_t materialId = material >= 0.0f && material <= 11.0f
+                ? static_cast<int32_t>(material) : 0;
         float blurRadius = region[0];
         float alpha = region[1];
         float left = region[2];
@@ -920,7 +935,8 @@ static void nativeSetBlurRegions(JNIEnv* env, jclass clazz, jlong transactionObj
                                               .left = static_cast<int>(left),
                                               .top = static_cast<int>(top),
                                               .right = static_cast<int>(right),
-                                              .bottom = static_cast<int>(bottom)});
+                                              .bottom = static_cast<int>(bottom),
+                                              .material = materialId});
     }
 
     transaction->setBlurRegions(ctrl, blurRegionVector);

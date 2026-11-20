@@ -31,6 +31,7 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.graphics.RenderNode;
+import android.graphics.Xfermode;
 import android.graphics.drawable.Drawable;
 import android.util.ArraySet;
 import android.util.Log;
@@ -62,6 +63,7 @@ public final class BackgroundBlurDrawable extends Drawable {
     // Confined to UiThread. The values are copied into a BlurRegion, which lives on
     // RenderThread to avoid interference with UiThread updates.
     private int mBlurRadius;
+    private int mMaterial;
     private float mCornerRadiusTL;
     private float mCornerRadiusTR;
     private float mCornerRadiusBL;
@@ -140,6 +142,21 @@ public final class BackgroundBlurDrawable extends Drawable {
      */
     public void setColor(@ColorInt int color) {
         mPaint.setColor(color);
+    }
+
+    /** Selects the compositor material. Zero uses the configured default. */
+    public void setMaterial(int material) {
+        if (mMaterial != material) {
+            mMaterial = material;
+            mAggregator.onBlurDrawableUpdated(this);
+            invalidateSelf();
+        }
+    }
+
+    /** Sets the blend mode of the tint above the blur region. */
+    public void setXfermode(@Nullable Xfermode mode) {
+        mPaint.setXfermode(mode);
+        invalidateSelf();
     }
 
     @Override
@@ -478,10 +495,12 @@ public final class BackgroundBlurDrawable extends Drawable {
         public final Rect rect;
         private final boolean mApplyRenderNodeAlpha;
         private final float[] mRenderNodeAlpha;
+        private final int mMaterial;
 
         BlurRegion(BackgroundBlurDrawable drawable) {
             alpha = drawable.mAlpha / 255f;
             blurRadius = drawable.mBlurRadius;
+            mMaterial = drawable.mMaterial;
             cornerRadiusTL = drawable.mCornerRadiusTL;
             cornerRadiusTR = drawable.mCornerRadiusTR;
             cornerRadiusBL = drawable.mCornerRadiusBL;
@@ -499,7 +518,7 @@ public final class BackgroundBlurDrawable extends Drawable {
          * Serializes this class into a float array that's more JNI friendly.
          */
         float[] toFloatArray() {
-            final float[] floatArray = new float[10];
+            final float[] floatArray = new float[11];
             floatArray[0] = blurRadius;
             floatArray[1] = getEffectiveAlpha();
             floatArray[2] = rect.left;
@@ -510,6 +529,7 @@ public final class BackgroundBlurDrawable extends Drawable {
             floatArray[7] = cornerRadiusTR;
             floatArray[8] = cornerRadiusBL;
             floatArray[9] = cornerRadiusBR;
+            floatArray[10] = mMaterial;
             return floatArray;
         }
 
