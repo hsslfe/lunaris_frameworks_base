@@ -580,9 +580,11 @@ constructor(
             !keyguardStateController.isKeyguardGoingAway && willUnlockWithInWindowLauncherAnimations
         ) {
             try {
+                // Keep the fail-safe for a prepared but idle launcher; do not
+                // interrupt a reveal that has already started during wake-and-unlock.
                 launcherUnlockController?.setUnlockAmount(
                     1f,
-                    biometricUnlockControllerLazy.get().isWakeAndUnlock, /* forceIfAnimating */
+                    false, /* forceIfAnimating */
                 )
             } catch (e: DeadObjectException) {
                 Log.e(
