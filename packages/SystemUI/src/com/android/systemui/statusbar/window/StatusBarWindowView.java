@@ -22,6 +22,7 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.util.AttributeSet;
+import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.View;
 import android.view.WindowInsets;
@@ -33,6 +34,7 @@ import androidx.annotation.Nullable;
 import com.android.systemui.compose.ComposeInitializer;
 import com.android.systemui.statusbar.core.StatusBarRootModernization;
 import com.android.systemui.statusbar.data.repository.StatusBarConfigurationController;
+import com.android.systemui.statusbar.notification.stack.MistDropStatusBar;
 
 /**
  * Status bar view
@@ -63,6 +65,9 @@ public class StatusBarWindowView extends FrameLayout {
         if (StatusBarRootModernization.isEnabled()) {
             ComposeInitializer.INSTANCE.onAttachedToWindow(this);
         }
+        if (getContext().getDisplayId() == Display.DEFAULT_DISPLAY) {
+            MistDropStatusBar.attach(this);
+        }
     }
 
     @Override
@@ -72,6 +77,7 @@ public class StatusBarWindowView extends FrameLayout {
         if (StatusBarRootModernization.isEnabled()) {
             ComposeInitializer.INSTANCE.onDetachedFromWindow(this);
         }
+        MistDropStatusBar.detach(this);
     }
 
     /**
