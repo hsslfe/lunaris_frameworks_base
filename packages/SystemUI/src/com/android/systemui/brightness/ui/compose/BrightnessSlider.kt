@@ -16,6 +16,11 @@
 
 package com.android.systemui.brightness.ui.compose
 
+import com.android.systemui.qs.shared.style.LiquidGlassControl
+import com.android.systemui.qs.shared.style.glassRim
+import com.android.systemui.qs.shared.style.glassPress
+import com.android.systemui.qs.shared.style.glassBlurRegion
+import com.android.systemui.qs.shared.style.liquidGlassOnShade
 import android.content.ContentResolver
 import android.content.Context
 import android.database.ContentObserver
@@ -229,6 +234,7 @@ fun BrightnessSlider(
         }
     }
 
+    val glass = liquidGlassOnShade() && brightnessGradient == null
     val hasAutoBrightness = context.resources.getBoolean(
         com.android.internal.R.bool.config_automatic_brightness_available
     )
@@ -278,7 +284,8 @@ fun BrightnessSlider(
         val iconTapScope = rememberCoroutineScope()
         val axTrackColor = brightnessGradient?.brush?.let { null } ?: CustomColorScheme.current.qsTileColor
         val sliderColors = PlatformSliderDefaults.defaultPlatformSliderColors().copy(
-            trackColor = axTrackColor ?: CustomColorScheme.current.qsTileColor,
+            trackColor = if (glass) LiquidGlassControl
+                else axTrackColor ?: CustomColorScheme.current.qsTileColor,
         )
 
         val axActiveFraction by
@@ -639,6 +646,8 @@ fun BrightnessSlider(
                             }
                             .height(TrackHeight)
                             .fillMaxWidth()
+                            .then(if (glass) Modifier.glassRim(trackShape)
+                                .glassBlurRegion(trackShape) else Modifier)
                             .drawWithContent {
                                 val trackHeight = size.height
                                 val trackWidth = size.width
@@ -647,7 +656,7 @@ fun BrightnessSlider(
                                 val cornerRadius = CornerRadius(trackCornerDp.toPx())
                                 
                                 drawRoundRect(
-                                    color = colors.inactiveTrackColor,
+                                    color = if (glass) LiquidGlassControl else colors.inactiveTrackColor,
                                     topLeft = Offset(0f, 0f),
                                     size = Size(trackWidth, trackHeight),
                                     cornerRadius = cornerRadius
@@ -1126,11 +1135,12 @@ private fun drawAutoBrightnessButton(
     }
     val brightnessGradient = brightnessSliderGradient()
     val autoIconBrush: Brush? = if (autoMode) brightnessGradient?.brush else null
+    val glass = liquidGlassOnShade() && brightnessGradient == null
     val backgroundColor by animateColorAsState(
         targetValue = if (autoMode) {
             if (autoIconBrush == null) MaterialTheme.colorScheme.primary else Color.Unspecified
         } else {
-            CustomColorScheme.current.qsTileColor
+            if (glass) LiquidGlassControl else CustomColorScheme.current.qsTileColor
         }
     )
     val iconTint by animateColorAsState(
@@ -1156,6 +1166,8 @@ private fun drawAutoBrightnessButton(
             .size(TrackHeight)
             .squishAnimation(toggleCount)
             .clip(autoIconShape)
+            .then(if (glass) Modifier.glassPress().glassRim(autoIconShape)
+                .glassBlurRegion(autoIconShape) else Modifier)
             .then(
                 if (autoIconBrush != null) {
                     Modifier.background(autoIconBrush)

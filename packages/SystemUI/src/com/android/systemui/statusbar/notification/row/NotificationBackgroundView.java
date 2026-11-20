@@ -22,10 +22,12 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
@@ -33,6 +35,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.CrossWindowBlurListeners;
 import android.view.View;
 
 import androidx.annotation.NonNull;
@@ -41,10 +44,12 @@ import androidx.annotation.Nullable;
 import com.android.axion.blur.AxBlurBackgroundRenderer;
 import com.android.axion.blur.AxBlurColors;
 import com.android.axion.blur.model.AxBackdropBlurSettingsSpec;
+import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.internal.util.ContrastColorUtil;
 import com.android.systemui.Dumpable;
 import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.common.ui.drawable.CosTileBorderDrawable;
+import com.android.systemui.qs.shared.style.LiquidGlass;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.shared.NotificationAddXOnHoverToDismiss;
 import com.android.systemui.util.DrawableDumpKt;
@@ -94,6 +99,11 @@ public class NotificationBackgroundView extends View implements Dumpable,
     private boolean mDrawDismissButtonCutout = false;
 
     private boolean mIsBlurSupported = false;
+    @Nullable private BackgroundBlurDrawable mGlassBlur;
+    private final RectF mGlassRimBounds = new RectF();
+    private boolean mGlassHeadsUp;
+    private boolean mGlassSuppressed;
+    private float mGlassFade = 1f;
 
     public NotificationBackgroundView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -143,6 +153,10 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     @Override
     protected void onDetachedFromWindow() {
+        if (mGlassBlur != null) {
+            mGlassBlur.setVisible(false, false);
+            mGlassBlur = null;
+        }
         mAxBlurRenderer.onDetachedFromWindow();
         super.onDetachedFromWindow();
     }
@@ -151,6 +165,9 @@ public class NotificationBackgroundView extends View implements Dumpable,
     public void onVisibilityAggregated(boolean isVisible) {
         super.onVisibilityAggregated(isVisible);
         mAxBlurRenderer.onVisibilityAggregated(isVisible);
+        if (!isVisible && mGlassBlur != null) {
+            mGlassBlur.setVisible(false, false);
+        }
     }
 
     @Override
@@ -176,6 +193,10 @@ public class NotificationBackgroundView extends View implements Dumpable,
     protected void onDraw(Canvas canvas) {
         float clipTop = Math.max(mClipTopAmount, mTopOverlap);
         int clipBottomAmount = Math.max(mClipBottomAmount, mBottomOverlap);
+        if (clipTop + clipBottomAmount >= getActualHeight() && !mExpandAnimationRunning
+                && mGlassBlur != null) {
+            mGlassBlur.setVisible(false, false);
+        }
         if (clipTop + clipBottomAmount < getActualHeight() || mExpandAnimationRunning) {
             canvas.save();
             if (!mExpandAnimationRunning) {
@@ -199,7 +220,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
             }
 
             if (mBackground != null) {
-                boolean drewAxBlur = drawAxBlurBackground(canvas, backgroundBounds);
+                boolean drewAxBlur = drawGlass(canvas, backgroundBounds)
+                        || drawAxBlurBackground(canvas, backgroundBounds);
                 if (shouldDrawFallbackBackground(drewAxBlur)) {
                     mBackground.setBounds(backgroundBounds);
                     mBackground.draw(canvas);
@@ -298,7 +320,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
                 right = (int) (left + actualWidth);
             }
             mBackgroundBounds.set(left, top, right, bottom);
-            boolean drewAxBlur = drawAxBlurBackground(canvas, mBackgroundBounds);
+            boolean drewAxBlur = drawGlass(canvas, mBackgroundBounds)
+                    || drawAxBlurBackground(canvas, mBackgroundBounds);
             if (shouldDrawFallbackBackground(drewAxBlur)) {
                 drawable.setBounds(left, top, right, bottom);
                 drawable.draw(canvas);
@@ -307,8 +330,74 @@ public class NotificationBackgroundView extends View implements Dumpable,
         }
     }
 
+    private boolean drawGlass(Canvas canvas, Rect bounds) {
+        if (!LiquidGlass.isOnShade(mContext) || (!mAxBlurEnabled && !mGlassHeadsUp)
+                || !CrossWindowBlurListeners.getInstance().isCrossWindowBlurEnabled()
+                || !canvas.isHardwareAccelerated() || bounds.isEmpty()
+                || getViewRootImpl() == null) {
+            if (mGlassBlur != null) mGlassBlur.setVisible(false, false);
+            return false;
+        }
+        if (mGlassSuppressed || mGlassFade <= 0f) {
+            if (mGlassBlur != null) mGlassBlur.setVisible(false, false);
+            return true;
+        }
+        if (mGlassBlur == null) {
+            mGlassBlur = getViewRootImpl().createBackgroundBlurDrawable();
+            mGlassBlur.setApplyRenderNodeAlpha(true);
+            mGlassBlur.setXfermode(null);
+        }
+        final boolean light = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES;
+        final boolean cos = LiquidGlass.isCosStyle(mContext);
+        final int material = cos ? (mGlassHeadsUp ? (light ? 10 : 9) : (light ? 8 : 7)) : 0;
+        mGlassBlur.setMaterial(material);
+        mGlassBlur.setBlurRadius(getResources().getDimensionPixelSize(
+                R.dimen.liquid_glass_notification_blur_radius));
+        mGlassBlur.setCornerRadius(mCornerRadii[0], mCornerRadii[2],
+                mCornerRadii[6], mCornerRadii[4]);
+        mGlassBlur.setBounds(bounds);
+        mGlassBlur.setAlpha(Math.round(mBackground.getAlpha() * mGlassFade));
+        final int frost = mGlassHeadsUp ? LiquidGlass.headsUpSurface()
+                : light ? 0x40FFFFFF : LiquidGlass.viewSurface();
+        mGlassBlur.setColor(cos ? Color.TRANSPARENT : frost);
+        mGlassBlur.setVisible(true, false);
+        mGlassBlur.draw(canvas);
+        if (!cos) {
+            mGlassRimBounds.set(bounds);
+            LiquidGlass.drawRim(canvas, mGlassRimBounds, mCornerRadii,
+                    getResources().getDisplayMetrics().density);
+        }
+        return true;
+    }
+
+    void setHeadsUpGlass(boolean headsUp) {
+        if (mGlassHeadsUp != headsUp) {
+            mGlassHeadsUp = headsUp;
+            invalidate();
+        }
+    }
+
+    void setBlurRegionFade(float fade) {
+        if (mGlassFade != fade) {
+            mGlassFade = fade;
+            invalidate();
+        }
+    }
+
+    void setBlurRegionSuppressed(boolean suppressed) {
+        if (mGlassSuppressed != suppressed) {
+            mGlassSuppressed = suppressed;
+            if (suppressed && mGlassBlur != null) {
+                mGlassBlur.setVisible(false, false);
+            }
+            invalidate();
+        }
+    }
+
     private void drawCosTileBorder(Canvas canvas, Rect bounds) {
-        if (!mCosTileBackgroundEnabled || bounds.isEmpty()) {
+        if (!mCosTileBackgroundEnabled || bounds.isEmpty()
+                || (mGlassBlur != null && mGlassBlur.isVisible())) {
             return;
         }
         mCosTileBorder.setBounds(bounds);

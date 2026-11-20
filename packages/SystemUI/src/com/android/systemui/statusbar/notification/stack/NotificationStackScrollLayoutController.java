@@ -33,10 +33,13 @@ import static com.android.systemui.statusbar.notification.stack.StackStateAnimat
 
 import android.animation.ObjectAnimator;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.graphics.Point;
 import android.graphics.RectF;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -241,6 +244,15 @@ public class NotificationStackScrollLayoutController implements Dumpable {
     private final NotificationListContainerImpl mNotificationListContainer =
             new NotificationListContainerImpl();
 
+    /** Liquid Glass recolors the footer buttons and the empty shade, see updateDecorViews(). */
+    private final ContentObserver mGlassObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    mView.post(mView::refreshLiquidGlass);
+                }
+            };
+
     @VisibleForTesting
     final View.OnAttachStateChangeListener mOnAttachStateChangeListener =
             new View.OnAttachStateChangeListener() {
@@ -255,6 +267,16 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                             Settings.Secure.LOCK_SCREEN_STACKED_NOTIFICATIONS,
                             Settings.Secure.LOCK_SCREEN_NOTIFICATIONS_BOTTOM_ANCHORED,
                             LOCKSCREEN_NOTIFICATION_ANCHOR_POSITION);
+                    for (String key : new String[] {"liquid_glass", "liquid_glass_style", "liquid_glass_refraction"}) {
+                        mView.getContext().getContentResolver().registerContentObserver(
+                                Settings.Secure.getUriFor(key), false, mGlassObserver,
+                                UserHandle.USER_ALL);
+                    }
+                    mView.getContext().getContentResolver().registerContentObserver(
+                            Settings.Secure.getUriFor(com.android.systemui.qs.flags.QsCosTileBackground.SETTING),
+                            false,
+                            mGlassObserver, UserHandle.USER_ALL);
+                    mView.post(mView::refreshLiquidGlass);
                     final int newBarState = mStatusBarStateController.getState();
                     if (newBarState != mBarState) {
                         mStateListener.onStateChanged(newBarState);
@@ -268,6 +290,8 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                 public void onViewDetachedFromWindow(View v) {
                     mColorUpdateLogger.logTriggerEvent("NSSLC.onViewDetachedFromWindow()");
                     mConfigurationController.removeCallback(mConfigurationListener);
+                    mView.getContext().getContentResolver()
+                            .unregisterContentObserver(mGlassObserver);
                     mStatusBarStateController.removeCallback(mStateListener);
                     mTunerService.removeTunable(mTunable);
                     mTunerService.removeTunable(mLockscreenStackTunable);

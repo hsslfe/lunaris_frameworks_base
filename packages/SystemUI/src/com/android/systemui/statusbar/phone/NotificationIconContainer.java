@@ -138,6 +138,7 @@ public class NotificationIconContainer extends ViewGroup {
     private int mMaxIcons = Integer.MAX_VALUE;
     private boolean mOverrideIconColor;
     private boolean mUseInverseOverrideIconColor;
+    private int mForcedOverrideIconColor;
     private boolean mIsStaticLayout = true;
     private final HashMap<View, IconState> mIconStates = new HashMap<>();
     private int mDotPadding;
@@ -805,6 +806,11 @@ public class NotificationIconContainer extends ViewGroup {
         mOverrideIconColor = override;
     }
 
+    /** Overrides the icon color with {@code color}; 0 goes back to the themed text color. */
+    public void setForcedOverrideIconColor(int color) {
+        mForcedOverrideIconColor = color;
+    }
+
     public void setUseInverseOverrideIconColor(boolean override) {
         mUseInverseOverrideIconColor = override;
     }
@@ -921,8 +927,11 @@ public class NotificationIconContainer extends ViewGroup {
                             Settings.System.STATUSBAR_COLORED_ICONS, 0, UserHandle.USER_CURRENT) == 1;
                 if (icon.getStatusBarIcon().pkg.contains("systemui") || !newIconStyle) {
                     if (mOverrideIconColor) {
-                        int overrideIconColor = mUseInverseOverrideIconColor
-                                ? mThemedTextColorPrimaryInverse : mThemedTextColorPrimary;
+                        int overrideIconColor = mForcedOverrideIconColor != 0
+                                ? mForcedOverrideIconColor
+                                : mUseInverseOverrideIconColor
+                                        ? mThemedTextColorPrimaryInverse
+                                        : mThemedTextColorPrimary;
                         icon.setIconColor(overrideIconColor,
                                 /* animate= */ needsCannedAnimation && animationsAllowed);
                     }

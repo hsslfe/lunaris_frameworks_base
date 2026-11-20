@@ -16,6 +16,13 @@
 
 package com.android.systemui.statusbar.featurepods.popups.ui.compose
 
+import com.android.systemui.qs.shared.style.glassBlurRegion
+import com.android.systemui.qs.shared.style.liquidGlassBlurAvailable
+import com.android.systemui.qs.shared.style.glassRim
+import com.android.systemui.qs.shared.style.liquidGlassCosStyle
+import com.android.systemui.qs.shared.style.liquidGlassEnabled
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -37,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.platform.LocalContext
@@ -166,6 +174,19 @@ internal fun PopupBlurBackground(
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val enabled = LocalAxBlurEnabled.current
+    val glass = liquidGlassEnabled()
+    val cos = liquidGlassCosStyle()
+    if (glass && enabled && liquidGlassBlurAvailable()) {
+        val light = !androidx.compose.foundation.isSystemInDarkTheme()
+        Spacer(
+            modifier
+                .clip(shape)
+                .glassBlurRegion(shape, if (cos) (if (light) 8 else 7) else 0)
+                .then(if (cos) Modifier else Modifier.glassRim(shape))
+                .background(Color(overlayColor), shape)
+        )
+        return
+    }
     AndroidView(
         factory = { PopupBlurHost(it) },
         update = { view ->

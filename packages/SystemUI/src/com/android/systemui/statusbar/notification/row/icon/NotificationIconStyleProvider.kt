@@ -24,6 +24,7 @@ import android.content.pm.ApplicationInfo
 import android.os.UserManager
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.android.systemui.qs.shared.style.LiquidGlass
 import com.android.systemui.Dumpable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dump.DumpManager
@@ -72,7 +73,7 @@ constructor(
     private val cache = NotifCollectionCache<Boolean>(systemClock = systemClock)
 
     override fun shouldShowAppIcon(notification: StatusBarNotification, context: Context): Boolean {
-        return !prefersSmallIcon(notification.notification) &&
+        return (LiquidGlass.isOnShade(context) || !prefersSmallIcon(notification.notification)) &&
             packageHasAppIcon(notification, context)
     }
 

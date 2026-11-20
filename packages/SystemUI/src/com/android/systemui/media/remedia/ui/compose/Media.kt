@@ -18,6 +18,7 @@
 
 package com.android.systemui.media.remedia.ui.compose
 
+import com.android.systemui.qs.shared.style.glassBlurRegion
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -174,6 +175,9 @@ import com.android.systemui.media.remedia.ui.viewmodel.MediaPlayPauseActionViewM
 import com.android.systemui.media.remedia.ui.viewmodel.MediaSecondaryActionViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaSettingsButtonViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
+import com.android.systemui.qs.shared.style.LiquidGlassSurface
+import com.android.systemui.qs.shared.style.glassRim
+import com.android.systemui.qs.shared.style.liquidGlassOn
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -775,7 +779,7 @@ private fun ContentScope.CompactCardForeground(
                     onClick = { viewModel.onClick(expandable) },
                     onClickLabel = viewModel.onClickLabel,
                 )
-                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .then(compactCardBackground())
                 .padding(16.dp),
     ) {
         Icon(
@@ -808,16 +812,38 @@ private fun ContentScope.CompactCardForeground(
             )
         }
 
+        val glass = liquidGlassOn
         AnimatedVisibility(visible = viewModel.playPauseAction != null) {
             PlayPauseAction(
                 viewModel = viewModel.playPauseAction,
-                buttonColor = MaterialTheme.colorScheme.primaryContainer,
-                iconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                buttonColor =
+                    if (glass) Color.White else MaterialTheme.colorScheme.primaryContainer,
+                iconColor =
+                    if (glass) LiquidGlassGlyph else MaterialTheme.colorScheme.onPrimaryContainer,
                 buttonCornerRadius = { isPlaying -> if (isPlaying) 16.dp else 24.dp },
             )
         }
     }
 }
+
+/**
+ * Background of the compact card. With Liquid Glass it blurs what is behind the shade, like the
+ * stock tiles, under a light glass tint; otherwise it is the stock surface colour.
+ */
+@Composable
+private fun compactCardBackground(): Modifier =
+    if (liquidGlassOn) {
+        Modifier.glassBlurRegion(CompactCardShape).glassRim(CompactCardShape)
+            .background(LiquidGlassSurface, CompactCardShape)
+    } else {
+        Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+    }
+
+/** Matches the carousel's clip so the blur and rim follow the card's corners. */
+private val CompactCardShape = RoundedCornerShape(32.dp)
+
+/** Dark glyph Liquid Glass puts on its white controls. */
+private val LiquidGlassGlyph = Color(0xFF1C1C1E)
 
 /** Renders the background of a card, loading the artwork and showing an overlay on top of it. */
 @Composable

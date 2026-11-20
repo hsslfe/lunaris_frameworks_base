@@ -297,6 +297,8 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
         resolveTemplateViews(NotificationBundleUi.isEnabled()
                 ? row.getEntryAdapter().getSbn()
                 : row.getEntryLegacy().getSbn());
+        emphasizeForGlass(mTitle);
+        emphasizeForGlass(mAltTitle);
         super.onContentUpdated(row);
         // With the modern templates, a large icon visually overlaps the header, so we can't
         // hide the header, we must show it.

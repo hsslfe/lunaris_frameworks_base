@@ -33,6 +33,7 @@ import android.os.Looper;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.service.notification.StatusBarNotification;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.util.AttributeSet;
@@ -53,6 +54,7 @@ import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.SystemBarUtils;
 import com.android.systemui.animation.ShadeInterpolation;
+import com.android.systemui.qs.shared.style.LiquidGlass;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
 import com.android.systemui.shade.transition.LargeScreenShadeInterpolator;
@@ -176,7 +178,9 @@ public class NotificationShelf extends ActivatableNotificationView {
     private void updateResources() {
         Resources res = getResources();
         mStatusBarHeight = SystemBarUtils.getStatusBarHeight(mContext);
-        mPaddingBetweenElements = res.getDimensionPixelSize(R.dimen.notification_divider_height);
+        LiquidGlass.isOnShade(mContext);
+        mPaddingBetweenElements = LiquidGlass.notificationGap(res,
+                res.getDimensionPixelSize(R.dimen.notification_divider_height));
         mMaxIconsOnLockscreen = res.getInteger(R.integer.max_notif_icons_on_lockscreen);
         mMotoCompactIconSpacing = res.getDimensionPixelSize(
                 R.dimen.moto_compact_notification_icon_spacing);
@@ -901,6 +905,10 @@ public class NotificationShelf extends ActivatableNotificationView {
 
         // TODO(b/172289889) transition last icon in shelf to notification icon and vice versa.
         setVisibility(isHidden ? View.INVISIBLE : View.VISIBLE);
+        // The lock screen pill is glass over the wallpaper, so its icons stay white there.
+        mShelfIcons.setForcedOverrideIconColor(
+                mAmbientState.isOnKeyguard() && LiquidGlass.isOnShade(getContext())
+                        ? Color.WHITE : 0);
         mShelfIcons.calculateIconXTranslations();
         mShelfIcons.applyIconStates();
         if (mMotoCompactDesign) {

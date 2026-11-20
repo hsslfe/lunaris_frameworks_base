@@ -18,6 +18,9 @@
 
 package com.android.systemui.scene.ui.composable
 
+import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.qs.shared.style.LocalGlassDrawOverArt
+import androidx.compose.runtime.CompositionLocalProvider
 import android.os.Build
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -55,6 +58,7 @@ import com.android.systemui.ribbon.ui.composable.BottomRightCornerRibbon
 import com.android.systemui.scene.shared.model.SceneDataSourceDelegator
 import com.android.systemui.scene.ui.view.SceneJankMonitor
 import com.android.systemui.scene.ui.viewmodel.SceneContainerViewModel
+import com.android.systemui.shade.ui.composable.CosShadeGlass
 import com.android.systemui.shade.ui.composable.OverlayShade
 import com.android.systemui.shade.ui.composable.isFullWidthShade
 
@@ -200,6 +204,8 @@ fun SceneContainer(
             modifier = Modifier.fillMaxSize(),
         )
 
+        CosShadeGlass(state, viewModel.isLaunchingActivity)
+
         SceneTransitionLayout(
             state = state,
             modifier = Modifier.fillMaxSize(),
@@ -234,7 +240,11 @@ fun SceneContainer(
                     LaunchedEffect(overlay) { overlay.activate() }
 
                     // Render the overlay.
-                    with(overlay) { this@overlay.Content(Modifier) }
+                    CompositionLocalProvider(
+                        LocalGlassDrawOverArt provides (state.currentScene == Scenes.Lockscreen),
+                    ) {
+                        with(overlay) { this@overlay.Content(Modifier) }
+                    }
                 }
             }
         }

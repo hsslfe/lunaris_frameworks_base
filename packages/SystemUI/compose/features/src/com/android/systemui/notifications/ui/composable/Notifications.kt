@@ -17,6 +17,8 @@
 
 package com.android.systemui.notifications.ui.composable
 
+import com.android.systemui.qs.shared.style.LiquidGlass
+import com.android.systemui.shade.ui.ShadeColors
 import android.util.Log
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -82,6 +84,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.dimensionResource
@@ -363,6 +366,7 @@ fun ContentScope.NotificationScrollingStack(
     shouldShowScrim: Boolean = true,
     supportNestedScrolling: Boolean,
     onEmptySpaceClick: (() -> Unit)? = null,
+    onGlassClipBottomChanged: ((Float) -> Unit)? = null,
 ) {
     if (!isAlwaysComposedContentVisible()) {
         // Some scenes or overlays that use this Composable may be using alwaysCompose=true which
@@ -389,7 +393,15 @@ fun ContentScope.NotificationScrollingStack(
     val density = LocalDensity.current
     val screenCornerRadius = LocalScreenCornerRadius.current
     val scrimCornerRadius = dimensionResource(R.dimen.notification_scrim_corner_radius)
-    val surfaceEffect0Color = LocalAndroidColorScheme.current.surfaceEffect0
+    val context = LocalContext.current
+    val glass = remember(context) { LiquidGlass.enabled(context) }.value
+    val dualTone = remember(context) { LiquidGlass.dualTone(context) }.value
+    val cosPanel = remember(context) { LiquidGlass.colorOsPanel(context) }.value
+    val surfaceEffect0Color = if (glass && dualTone && !cosPanel) {
+        Color(ShadeColors.liquidGlassNotificationTint(context) ?: 0)
+    } else {
+        LocalAndroidColorScheme.current.surfaceEffect0
+    }
     val scrollState =
         shadeSession.rememberSaveableSession(saver = ScrollState.Saver, key = "ScrollState") {
             ScrollState(initial = 0)
@@ -426,7 +438,12 @@ fun ContentScope.NotificationScrollingStack(
     val scrimOffset = shadeSession.rememberSession(key = "ScrimOffset") { Animatable(0f) }
 
     // set the bounds to null when the scrim disappears
-    DisposableEffect(Unit) { onDispose { viewModel.onScrimBoundsChanged(null) } }
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.onScrimBoundsChanged(null)
+            onGlassClipBottomChanged?.invoke(Float.POSITIVE_INFINITY)
+        }
+    }
 
     // Top position if the scrim, when it is fully expanded.
     val minScrimTop = ShadeHeader.Dimensions.StatusBarHeight
@@ -692,6 +709,7 @@ fun ContentScope.NotificationScrollingStack(
                 }
                 .onGloballyPositioned { coordinates ->
                     val boundsInWindow = coordinates.boundsInWindow()
+                    onGlassClipBottomChanged?.invoke(boundsInWindow.top)
                     debugLog(viewModel) {
                         "SCRIM onGloballyPositioned:" +
                             " size=${coordinates.size}" +

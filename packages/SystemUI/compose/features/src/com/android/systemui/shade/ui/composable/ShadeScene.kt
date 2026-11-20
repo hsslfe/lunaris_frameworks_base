@@ -16,6 +16,8 @@
 
 package com.android.systemui.shade.ui.composable
 
+import com.android.systemui.qs.shared.style.LocalGlassClipBottom
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
@@ -266,6 +268,8 @@ private fun ContentScope.SingleShade(
     val cutoutInsets = WindowInsets.Companion.displayCutout
 
     var maxNotifScrimTop by remember { mutableIntStateOf(0) }
+    val notificationScrimTop = remember { mutableFloatStateOf(Float.POSITIVE_INFINITY) }
+    val glassClipBottom = remember { { notificationScrimTop.floatValue } }
     val tileSquishiness by
         animateContentFloatAsState(
             value = 1f,
@@ -326,47 +330,49 @@ private fun ContentScope.SingleShade(
                 val qqsLayoutPaddingBottom = 16.dp
                 val qsHorizontalMargin =
                     shadeHorizontalPadding + dimensionResource(id = R.dimen.qs_horizontal_margin)
-                MediaAndQqsLayout(
-                    modifier =
-                        Modifier.element(QuickSettings.Elements.QuickQuickSettingsAndMedia)
-                            .layoutId(SingleShadeMeasurePolicy.LayoutId.MediaAndQqs)
-                            .padding(bottom = qqsLayoutPaddingBottom)
-                            .padding(horizontal = qsHorizontalMargin),
-                    tiles = {
-                        Box {
-                            val qqsViewModel =
-                                rememberViewModel(traceName = "shade_scene_qqs") {
-                                    viewModel.quickQuickSettingsViewModel.create()
-                                }
-                            if (viewModel.isQsEnabled) {
-                                QuickQuickSettings(
-                                    qqsViewModel,
-                                    listening = { true },
-                                    modifier = Modifier.sysuiResTag("quick_qs_panel"),
-                                )
-                            }
-                        }
-                    },
-                    media =
-                        @Composable {
-                            if (viewModel.isQsEnabled && viewModel.showMedia) {
-                                Element(key = Media.Elements.mediaCarousel, modifier = Modifier) {
-                                    Media(
-                                        viewModelFactory = viewModel.mediaViewModelFactory,
-                                        presentationStyle =
-                                            if (mediaInRow) {
-                                                MediaPresentationStyle.Compressed
-                                            } else {
-                                                MediaPresentationStyle.Default
-                                            },
-                                        behavior = ShadeSceneContentViewModel.qqsMediaUiBehavior,
-                                        onDismissed = viewModel::onMediaSwipeToDismiss,
+                CompositionLocalProvider(LocalGlassClipBottom provides glassClipBottom) {
+                    MediaAndQqsLayout(
+                        modifier =
+                            Modifier.element(QuickSettings.Elements.QuickQuickSettingsAndMedia)
+                                .layoutId(SingleShadeMeasurePolicy.LayoutId.MediaAndQqs)
+                                .padding(bottom = qqsLayoutPaddingBottom)
+                                .padding(horizontal = qsHorizontalMargin),
+                        tiles = {
+                            Box {
+                                val qqsViewModel =
+                                    rememberViewModel(traceName = "shade_scene_qqs") {
+                                        viewModel.quickQuickSettingsViewModel.create()
+                                    }
+                                if (viewModel.isQsEnabled) {
+                                    QuickQuickSettings(
+                                        qqsViewModel,
+                                        listening = { true },
+                                        modifier = Modifier.sysuiResTag("quick_qs_panel"),
                                     )
                                 }
                             }
                         },
-                    mediaInRow = mediaInRow,
-                )
+                        media =
+                            @Composable {
+                                if (viewModel.isQsEnabled && viewModel.showMedia) {
+                                    Element(key = Media.Elements.mediaCarousel, modifier = Modifier) {
+                                        Media(
+                                            viewModelFactory = viewModel.mediaViewModelFactory,
+                                            presentationStyle =
+                                                if (mediaInRow) {
+                                                    MediaPresentationStyle.Compressed
+                                                } else {
+                                                    MediaPresentationStyle.Default
+                                                },
+                                            behavior = ShadeSceneContentViewModel.qqsMediaUiBehavior,
+                                            onDismissed = viewModel::onMediaSwipeToDismiss,
+                                        )
+                                    }
+                                }
+                            },
+                        mediaInRow = mediaInRow,
+                    )
+                }
 
                 NotificationScrollingStack(
                     shadeSession = shadeSession,
@@ -378,6 +384,7 @@ private fun ContentScope.SingleShade(
                     stackTopPadding = notificationStackPadding,
                     stackBottomPadding = navBarHeight,
                     supportNestedScrolling = true,
+                    onGlassClipBottomChanged = { notificationScrimTop.floatValue = it },
                     onEmptySpaceClick = onEmptySpaceClick,
                     modifier =
                         Modifier.layoutId(SingleShadeMeasurePolicy.LayoutId.Notifications)

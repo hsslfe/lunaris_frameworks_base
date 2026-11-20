@@ -99,6 +99,7 @@ import com.android.systemui.ExpandHelper;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.Flags;
 import com.android.systemui.qs.LunarisQsMotion;
+import com.android.systemui.qs.shared.style.LiquidGlass;
 import com.android.systemui.qs.flags.QSComposeFragment;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
@@ -1003,6 +1004,58 @@ public class NotificationStackScrollLayout
         return textY;
     }
 
+    private NotificationGlassPress mGlassPress;
+    private boolean mGlassRegionsVisible = true;
+    private float mGlassRegionFade = 1f;
+    private float mLastGlassRegionFade = -1f;
+    private boolean mLastGlassRegionsSuppressed;
+
+    void refreshLiquidGlass() {
+        final boolean enabled = LiquidGlass.isOnShade(mContext);
+        if (!enabled && mGlassPress != null) {
+            mGlassPress.settle();
+            mGlassPress = null;
+        }
+        mPaddingBetweenElements = Math.max(1, LiquidGlass.notificationGap(getResources(),
+                getResources().getDimensionPixelSize(R.dimen.notification_divider_height)));
+        mStackScrollAlgorithm.initView(mContext);
+        if (mNotificationStackSizeCalculator != null) {
+            mNotificationStackSizeCalculator.updateResources();
+        }
+        for (int i = 0; i < getChildCount(); i++) {
+            if (getChildAt(i) instanceof ActivatableNotificationView row) {
+                row.refreshLiquidGlass();
+            }
+        }
+        mLastGlassRegionFade = -1f;
+        updateGlassRegionVisibility();
+        updateDecorViews();
+        requestChildrenUpdate();
+    }
+
+    @Override
+    public void onVisibilityAggregated(boolean isVisible) {
+        super.onVisibilityAggregated(isVisible);
+        mGlassRegionsVisible = isVisible;
+        updateGlassRegionVisibility();
+    }
+
+    private void updateGlassRegionVisibility() {
+        if (!LiquidGlass.isOnShade(mContext)) return;
+        final boolean suppressed = !mGlassRegionsVisible || getAlpha() <= 0.01f;
+        if (suppressed == mLastGlassRegionsSuppressed && mGlassRegionFade == mLastGlassRegionFade) {
+            return;
+        }
+        mLastGlassRegionsSuppressed = suppressed;
+        mLastGlassRegionFade = mGlassRegionFade;
+        for (int i = 0; i < getChildCount(); i++) {
+            if (getChildAt(i) instanceof ActivatableNotificationView row) {
+                row.setBlurRegionSuppressed(suppressed);
+                row.setBlurRegionFade(mGlassRegionFade);
+            }
+        }
+    }
+
     private void reinitView() {
         initView(getContext(), mSwipeHelper, mNotificationStackSizeCalculator);
     }
@@ -1851,6 +1904,7 @@ public class NotificationStackScrollLayout
     @Override
     public void setAlpha(float alpha) {
         super.setAlpha(alpha);
+        updateGlassRegionVisibility();
         if (Trace.isEnabled()) {
             Trace.setCounter(
                     trackGroup(/* groupName= */ "shade", /* trackName= */ "NSSLResultingAlpha"),
@@ -3695,6 +3749,8 @@ public class NotificationStackScrollLayout
         if (child instanceof ActivatableNotificationView activatableView) {
             activatableView.setDozing(mNotificationsDozing);
             activatableView.setShadeExpanded(isShadeOrQsExpanded());
+            activatableView.setBlurRegionSuppressed(!mGlassRegionsVisible || getAlpha() <= 0.01f);
+            activatableView.setBlurRegionFade(mGlassRegionFade);
         }
         generateAddAnimation(child, false /* fromMoreCard */);
         updateAnimationState(child);
@@ -4268,6 +4324,10 @@ public class NotificationStackScrollLayout
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (LiquidGlass.isOnShade(mContext)) {
+            if (mGlassPress == null) mGlassPress = new NotificationGlassPress(this);
+            mGlassPress.onTouch(this, ev);
+        }
         closeMotoCompactPreviewIfOutsideTouch(ev);
         final boolean collapseStack = handleLockscreenStackCollapseTouch(ev);
         MotionEvent dispatchedEvent = ev;
@@ -7223,6 +7283,9 @@ public class NotificationStackScrollLayout
         if (mBlurRadius != blurRadius) {
             mBlurRadius = blurRadius;
             updateBlurEffect();
+            mGlassRegionFade = Math.max(0f, 1f - blurRadius / (32f * getResources()
+                    .getDisplayMetrics().density));
+            updateGlassRegionVisibility();
             invalidate();
         }
     }

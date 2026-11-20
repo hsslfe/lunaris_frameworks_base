@@ -47,6 +47,7 @@ import com.android.systemui.scene.shared.logger.SceneLogger
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.scene.ui.composable.Overlay
+import com.android.systemui.shade.domain.interactor.ShadeAnimationInteractor
 import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
 import com.android.systemui.shade.shared.model.ShadeMode
 import com.android.systemui.statusbar.core.StatusBarForDesktop
@@ -87,12 +88,16 @@ constructor(
     val animateQsTilesViewModelFactory: AnimateQsTilesViewModel.Factory,
     @Assisted view: View,
     @Assisted private val motionEventHandlerReceiver: (MotionEventHandler?) -> Unit,
+    shadeAnimationInteractor: ShadeAnimationInteractor,
 ) : ExclusiveActivatable() {
 
     /** The scene that should be rendered. */
     val currentScene: StateFlow<SceneKey> = sceneInteractor.currentScene
 
     private val hydrator = Hydrator("SceneContainerViewModel.hydrator")
+
+    /** Whether an activity is launching from the shade with a transition animation. */
+    val isLaunchingActivity: StateFlow<Boolean> = shadeAnimationInteractor.isLaunchingActivity
 
     /** Whether the container is visible. */
     val isVisible: Boolean by hydrator.hydratedStateOf("isVisible", sceneInteractor.isVisible)

@@ -18,6 +18,12 @@
 
 package com.android.systemui.qs.panels.ui.compose.infinitegrid
 
+import com.android.systemui.qs.shared.style.LiquidGlassGlyphs
+import com.android.systemui.qs.shared.style.glassBlurRegion
+import com.android.systemui.qs.shared.style.glassRim
+import com.android.systemui.qs.shared.style.glassPress
+import com.android.systemui.qs.shared.style.liquidGlassOnShade
+import com.android.systemui.qs.shared.style.liquidGlassCosStyle
 import android.content.Context
 import android.content.res.Resources
 import android.database.ContentObserver
@@ -284,9 +290,20 @@ fun ContentScope.Tile(
         val outerShape = if (wantCircle && !classicStyle) RoundedCornerShape(0.dp) else tileShape
         val outerColor: () -> Color = if (wantCircle || classicStyle) { { Color.Transparent } } else { { animatedColor } }
         val focusBorderColor = MaterialTheme.colorScheme.secondary
+        val glass = liquidGlassOnShade() && isClickable && !classicStyle && !wantCircle
+            && !useMinimalStyle && colors.iconBackgroundGradient == null
+        val cosGlass = glass && liquidGlassCosStyle()
+        val glassMaterial = if (!cosGlass) 0 else {
+            val light = !androidx.compose.foundation.isSystemInDarkTheme()
+            if (uiState.state == android.service.quicksettings.Tile.STATE_ACTIVE) {
+                if (light) 4 else 2
+            } else {
+                if (light) 3 else 1
+            }
+        }
 
         TileExpandable(
-            color = outerColor,
+            color = if (glass) { { animatedColor.copy(alpha = 0.35f) } } else outerColor,
             shape = outerShape,
             squishiness = squishiness,
             hapticsViewModel = hapticsViewModel,
@@ -294,6 +311,10 @@ fun ContentScope.Tile(
             modifier =
                 modifier
                     .then(surfaceRevealModifier)
+                    .then(if (glass) {
+                        Modifier.glassPress().glassBlurRegion(outerShape, glassMaterial)
+                            .then(if (cosGlass) Modifier else Modifier.glassRim(outerShape))
+                    } else Modifier)
                     .thenIf(!wantCircle) {
                         Modifier.borderOnFocus(color = focusBorderColor, outerShape.topEnd)
                     }
@@ -444,7 +465,11 @@ fun ContentScope.Tile(
                     modifier = contentRevealModifier,
                     colors = colors,
                 ) {
-                    val iconProvider: Context.() -> Icon = { getTileIcon(icon = icon) }
+                    val iconProvider: Context.() -> Icon = {
+                        val defaultIcon = getTileIcon(icon = icon)
+                        if (glass) LiquidGlassGlyphs.swap(tile.spec.spec, defaultIcon)
+                        else defaultIcon
+                    }
                     if (iconOnly) {
                         SmallTileContent(
                             iconProvider = iconProvider,

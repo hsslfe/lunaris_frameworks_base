@@ -401,6 +401,7 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
     private boolean mViewsAttached;
 
     private ContentObserver mCustomColorObserver;
+    private ContentObserver mLiquidGlassColorObserver;
     private float mCachedShadeScrimAlpha = Float.NaN;
     private float mCachedNotifShadeScrimAlpha = Float.NaN;
     private boolean mScrimAlphaSettingsCached = false;
@@ -408,6 +409,13 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
 
     private void registerCustomColorObserver() {
         ContentResolver resolver = mContext.getContentResolver();
+        for (String key : ShadeColors.LIQUID_GLASS_COLOR_KEYS) {
+            resolver.registerContentObserver(Settings.Secure.getUriFor(key), false,
+                    mLiquidGlassColorObserver, UserHandle.USER_ALL);
+        }
+        resolver.registerContentObserver(
+                Settings.Secure.getUriFor(com.android.systemui.qs.flags.QsCosTileBackground.SETTING),
+                false, mLiquidGlassColorObserver, UserHandle.USER_ALL);
         for (String key : ShadeColors.CUSTOM_COLOR_KEYS) {
             resolver.registerContentObserver(
                     Settings.System.getUriFor(key),
@@ -513,6 +521,17 @@ public class ScrimController implements ViewTreeObserver.OnPreDrawListener, Dump
             public void onChange(boolean selfChange) {
                 updateThemeColors();
                 applyAndDispatchState();
+            }
+        };
+        mLiquidGlassColorObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                // Let the process-wide glass observers publish the new values first.
+                mHandler.post(() -> {
+                    updateThemeColors();
+                    mState.prepare(mState);
+                    applyAndDispatchState();
+                });
             }
         };
         mScrimAlphaSettingsObserver = new ContentObserver(mHandler) {

@@ -16,6 +16,14 @@
 
 package com.android.systemui.axdynamicbar.shared
 
+import com.android.systemui.qs.shared.style.glassBlurRegion
+import com.android.systemui.qs.shared.style.liquidGlassBlurAvailable
+import com.android.systemui.qs.shared.style.glassRim
+import com.android.systemui.qs.shared.style.liquidGlassCosStyle
+import com.android.systemui.qs.shared.style.liquidGlassEnabled
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import android.view.View
 import android.view.ViewTreeObserver
 import androidx.compose.runtime.Composable
@@ -71,6 +79,15 @@ internal fun Modifier.islandBlur(
 ): Modifier {
     val view = LocalView.current
     val enabled = LocalAxBlurEnabled.current
+    val glass = liquidGlassEnabled()
+    val cos = liquidGlassCosStyle()
+    if (glass && enabled && liquidGlassBlurAvailable()) {
+        val shape = RoundedCornerShape(cornerRadius)
+        val light = !isSystemInDarkTheme()
+        return glassBlurRegion(shape, if (cos) (if (light) 8 else 7) else 0)
+            .then(if (cos) Modifier else Modifier.glassRim(shape))
+            .background(fallbackColor.copy(alpha = 0.38f), shape)
+    }
     val blur = remember(view) { AxBlurBackgroundRenderer(view) }
     val radiusPx = with(LocalDensity.current) { cornerRadius.toPx() }
     val tintArgb = AxBlurSurfaceDefaults.tintColor(fallbackColor).toArgb()

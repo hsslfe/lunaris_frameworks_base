@@ -25,6 +25,7 @@ import com.android.systemui.scene.ui.composable.ConstantSceneContainerTransition
 import com.android.systemui.scene.ui.viewmodel.SceneContainerHapticsViewModel
 import com.android.systemui.scene.ui.viewmodel.SceneContainerViewModel
 import com.android.systemui.scene.ui.viewmodel.dualShadeEducationalTooltipsViewModelFactory
+import com.android.systemui.shade.domain.interactor.shadeAnimationInteractor
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.shade.domain.interactor.shadeModeInteractor
 import com.android.systemui.statusbar.domain.interactor.remoteInputInteractor
@@ -120,6 +121,7 @@ val Kosmos.sceneContainerViewModelFactory by Fixture {
                 dualShadeEducationalTooltipsViewModelFactory =
                     dualShadeEducationalTooltipsViewModelFactory,
                 animateQsTilesViewModelFactory = animateQsTilesViewModelFactory,
+                shadeAnimationInteractor = shadeAnimationInteractor,
             )
     }
 }

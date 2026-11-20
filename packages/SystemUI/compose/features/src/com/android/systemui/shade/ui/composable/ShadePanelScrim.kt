@@ -16,11 +16,18 @@
 
 package com.android.systemui.shade.ui.composable
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -43,13 +50,29 @@ fun ContentScope.ShadePanelScrim(isTransparencyEnabled: Boolean, modifier: Modif
 }
 
 @Composable
-@ReadOnlyComposable
 private fun scrimColor(isTransparencyEnabled: Boolean): Color {
-    // Read configuration to invalidate on changes
+    // Read configuration and the preference revision to recompute the panel color.
     LocalConfiguration.current
+    val context = LocalContext.current
+    val revision = remember(context) { mutableIntStateOf(0) }
+    DisposableEffect(context) {
+        val resolver = context.contentResolver
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                revision.intValue++
+            }
+        }
+        ShadeColors.LIQUID_GLASS_COLOR_KEYS.forEach { key ->
+            resolver.registerContentObserver(
+                Settings.Secure.getUriFor(key), false, observer, UserHandle.USER_ALL,
+            )
+        }
+        onDispose { resolver.unregisterContentObserver(observer) }
+    }
+    revision.intValue
     return Color(
         ShadeColors.shadePanel(
-            context = LocalContext.current,
+            context = context,
             blurSupported = isTransparencyEnabled,
             withScrim = true,
         )

@@ -18,6 +18,9 @@ package com.android.systemui.qs.panels.ui.compose.toolbar
 
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
+import com.android.systemui.qs.shared.style.liquidGlassOn
+import com.android.systemui.qs.shared.style.liquidGlassCosStyle
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,8 +85,12 @@ fun EditModeButton(
     if (!viewModel.isEditButtonVisible) {
         return
     }
+    // The ColorOS glass panel is dark in both themes.
+    val cosGlass = liquidGlassOn && liquidGlassCosStyle()
     CompositionLocalProvider(
-        value = LocalContentColor provides MaterialTheme.colorScheme.onSurface
+        value =
+            LocalContentColor provides
+                if (cosGlass) Color.White else MaterialTheme.colorScheme.onSurface
     ) {
         val tooltipState = rememberTooltipState(isPersistent = true)
         val showTooltip = isVisible && viewModel.showTooltip

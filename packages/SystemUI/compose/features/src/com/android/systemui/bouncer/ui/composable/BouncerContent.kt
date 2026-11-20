@@ -31,6 +31,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -61,6 +63,8 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
+import com.android.systemui.qs.shared.style.liquidGlassEnabled
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Text
@@ -208,38 +212,54 @@ fun ContentScope.BouncerContent(
         startAppearAnimation = true
     }
 
-    BouncerContent(
-        layout,
-        viewModel,
-        dialogFactory,
-        modifier =
-            modifier
-                .offset {
-                    val yOffset =
-                        if (isDraggingToBouncer()) {
-                            ((1 -
-                                    appearAnimationInterpolator.transform(
-                                        layoutState.currentTransition!!.progress
-                                    )) * BOUNCER_INITIAL_TRANSLATION)
-                                .toPx()
-                        } else {
-                            animatedOffsetY.value
-                        }
-                    IntOffset(x = 0, y = yOffset.toInt())
-                }
-                .graphicsLayer {
-                    alpha =
-                        if (isDraggingToBouncer()) {
-                            appearAnimationInterpolator.transform(
-                                // animate in along with the layout's transition
-                                layoutState.currentTransition!!.progress
-                            )
-                        } else {
-                            // animate in separately from the layout's transition
-                            animatedAlpha
-                        }
-                },
-    )
+    val content: @Composable () -> Unit = {
+        BouncerContent(
+            layout,
+            viewModel,
+            dialogFactory,
+            modifier =
+                modifier
+                    .offset {
+                        val yOffset =
+                            if (isDraggingToBouncer()) {
+                                ((1 -
+                                        appearAnimationInterpolator.transform(
+                                            layoutState.currentTransition!!.progress
+                                        )) * BOUNCER_INITIAL_TRANSLATION)
+                                    .toPx()
+                            } else {
+                                animatedOffsetY.value
+                            }
+                        IntOffset(x = 0, y = yOffset.toInt())
+                    }
+                    .graphicsLayer {
+                        alpha =
+                            if (isDraggingToBouncer()) {
+                                appearAnimationInterpolator.transform(
+                                    // animate in along with the layout's transition
+                                    layoutState.currentTransition!!.progress
+                                )
+                            } else {
+                                // animate in separately from the layout's transition
+                                animatedAlpha
+                            }
+                    },
+        )
+    }
+    if (liquidGlassEnabled() && !isSystemInDarkTheme()) {
+        val scheme = MaterialTheme.colorScheme
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.46f))) {
+            MaterialTheme(
+                colorScheme = scheme.copy(
+                    onSurface = Color.White,
+                    onSurfaceVariant = Color.White.copy(alpha = 0.85f),
+                ),
+                content = content,
+            )
+        }
+    } else {
+        content()
+    }
 }
 
 @Composable

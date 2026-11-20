@@ -390,6 +390,18 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
         updateAxBlurEnabled();
     }
 
+    public void setBlurRegionFade(float fade) {
+        if (mBackgroundNormal != null) mBackgroundNormal.setBlurRegionFade(fade);
+    }
+
+    public void setBlurRegionSuppressed(boolean suppressed) {
+        if (mBackgroundNormal != null) mBackgroundNormal.setBlurRegionSuppressed(suppressed);
+    }
+
+    public void refreshLiquidGlass() {
+        if (mBackgroundNormal != null) mBackgroundNormal.invalidate();
+    }
+
     protected void updateAxBlurEnabled() {
         if (mBackgroundNormal != null) {
             mBackgroundNormal.setAxBlurEnabled(shouldUseAxBlurBackground());

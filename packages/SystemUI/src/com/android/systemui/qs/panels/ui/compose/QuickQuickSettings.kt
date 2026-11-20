@@ -16,6 +16,9 @@
 
 package com.android.systemui.qs.panels.ui.compose
 
+import com.android.systemui.qs.shared.style.LocalGlassBlurAlpha
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberUpdatedState
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -65,71 +68,74 @@ fun ContentScope.QuickQuickSettings(
     val bounceables = remember(sizedTiles) { List(sizedTiles.size) { BounceableTileViewModel() } }
     val spans by remember(sizedTiles) { derivedStateOf { sizedTiles.fastMap { it.width } } }
 
-    Box(modifier = modifier) {
-        GridAnchor()
+    val glassAlpha = rememberUpdatedState(if (listening()) squishiness else 0f)
+    CompositionLocalProvider(LocalGlassBlurAlpha provides { glassAlpha.value }) {
+        Box(modifier = modifier) {
+            GridAnchor()
 
-        if (QSMaterialExpressiveTiles.isEnabled) {
-            ButtonGroupGrid(
-                sizedTiles = sizedTiles,
-                columns = columns,
-                keys = { it.spec },
-                elementKey = { it.spec.toElementKey() },
-                horizontalPadding = dimensionResource(R.dimen.qs_tile_margin_horizontal),
-                modifier = Modifier.sysuiResTag("qqs_tile_layout"),
-            ) { sizedTile, interactionSource ->
-                Tile(
-                    tile = sizedTile.tile,
-                    iconOnly = classicStyle || sizedTile.isIcon,
-                    squishiness = { squishiness },
-                    coroutineScope = scope,
-                    tileHapticsViewModelFactoryProvider =
-                        viewModel.tileHapticsViewModelFactoryProvider,
-                    // There should be no QuickQuickSettings when the details view is enabled.
-                    detailsViewModel = null,
-                    isVisible = listening,
-                    bounceableInfo = null,
-                    interactionSourceFromParent = interactionSource,
-                )
-            }
-        } else {
-            VerticalSpannedGrid(
-                columns = columns,
-                columnSpacing = if (useModifiedSpacing) {
-                    CommonTileDefaults.TileColumnSpacing
-                } else {
-                    dimensionResource(R.dimen.qs_tile_margin_horizontal)
-                },
-                rowSpacing = if (useModifiedSpacing) {
-                    CommonTileDefaults.TileRowSpacing
-                } else {
-                    classicRowSpacing
-                },
-                spans = spans,
-                modifier = Modifier.sysuiResTag("qqs_tile_layout")
-                    .then(if (useModifiedSpacing) Modifier.padding(horizontal = 10.dp) else Modifier),
-                keys = { sizedTiles[it].tile.spec },
-            ) { spanIndex, column, isFirstInColumn, isLastInColumn ->
-                val it = sizedTiles[spanIndex]
-                Element(it.tile.spec.toElementKey(), Modifier) {
+            if (QSMaterialExpressiveTiles.isEnabled) {
+                ButtonGroupGrid(
+                    sizedTiles = sizedTiles,
+                    columns = columns,
+                    keys = { it.spec },
+                    elementKey = { it.spec.toElementKey() },
+                    horizontalPadding = dimensionResource(R.dimen.qs_tile_margin_horizontal),
+                    modifier = Modifier.sysuiResTag("qqs_tile_layout"),
+                ) { sizedTile, interactionSource ->
                     Tile(
-                        tile = it.tile,
-                        iconOnly = classicStyle || it.isIcon,
+                        tile = sizedTile.tile,
+                        iconOnly = classicStyle || sizedTile.isIcon,
                         squishiness = { squishiness },
                         coroutineScope = scope,
-                        bounceableInfo =
-                            bounceables.bounceableInfo(
-                                it,
-                                index = spanIndex,
-                                column = column,
-                                columns = columns,
-                                isFirstInRow = isFirstInColumn,
-                                isLastInRow = isLastInColumn,
-                            ),
                         tileHapticsViewModelFactoryProvider =
                             viewModel.tileHapticsViewModelFactoryProvider,
+                        // There should be no QuickQuickSettings when the details view is enabled.
                         detailsViewModel = null,
                         isVisible = listening,
+                        bounceableInfo = null,
+                        interactionSourceFromParent = interactionSource,
                     )
+                }
+            } else {
+                VerticalSpannedGrid(
+                    columns = columns,
+                    columnSpacing = if (useModifiedSpacing) {
+                        CommonTileDefaults.TileColumnSpacing
+                    } else {
+                        dimensionResource(R.dimen.qs_tile_margin_horizontal)
+                    },
+                    rowSpacing = if (useModifiedSpacing) {
+                        CommonTileDefaults.TileRowSpacing
+                    } else {
+                        classicRowSpacing
+                    },
+                    spans = spans,
+                    modifier = Modifier.sysuiResTag("qqs_tile_layout")
+                        .then(if (useModifiedSpacing) Modifier.padding(horizontal = 10.dp) else Modifier),
+                    keys = { sizedTiles[it].tile.spec },
+                ) { spanIndex, column, isFirstInColumn, isLastInColumn ->
+                    val it = sizedTiles[spanIndex]
+                    Element(it.tile.spec.toElementKey(), Modifier) {
+                        Tile(
+                            tile = it.tile,
+                            iconOnly = classicStyle || it.isIcon,
+                            squishiness = { squishiness },
+                            coroutineScope = scope,
+                            bounceableInfo =
+                                bounceables.bounceableInfo(
+                                    it,
+                                    index = spanIndex,
+                                    column = column,
+                                    columns = columns,
+                                    isFirstInRow = isFirstInColumn,
+                                    isLastInRow = isLastInColumn,
+                                ),
+                            tileHapticsViewModelFactoryProvider =
+                                viewModel.tileHapticsViewModelFactoryProvider,
+                            detailsViewModel = null,
+                            isVisible = listening,
+                        )
+                    }
                 }
             }
         }

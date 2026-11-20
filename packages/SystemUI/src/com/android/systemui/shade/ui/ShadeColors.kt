@@ -17,12 +17,78 @@
 package com.android.systemui.shade.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.os.UserHandle
 import android.provider.Settings
 import com.android.internal.graphics.ColorUtils
+import com.android.internal.graphics.cam.Cam
+import com.android.systemui.qs.shared.style.LiquidGlass
+import com.android.systemui.qs.shared.style.LiquidGlassTune
+import kotlin.math.roundToInt
 import com.android.systemui.res.R
 
 object ShadeColors {
+
+    const val SHADE_STYLE_SETTING = "shade_color_style"
+
+    @JvmField
+    val LIQUID_GLASS_COLOR_KEYS = arrayOf(
+        SHADE_STYLE_SETTING,
+        "liquid_glass",
+        "liquid_glass_style",
+        "liquid_glass_dual_tone",
+    )
+
+    private data class ShadePreset(
+        val panelTone: Float,
+        val panelChroma: Float,
+        val panelAlpha: Float,
+        val fallbackTone: Float,
+        val fallbackChroma: Float,
+        val cardToneOffset: Float,
+        val cardAlpha: Float,
+        val useAccent: Boolean,
+    )
+
+    private fun shadePreset(context: Context): ShadePreset? {
+        val night = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        return when (Settings.Secure.getIntForUser(
+            context.contentResolver, SHADE_STYLE_SETTING, 0, UserHandle.USER_CURRENT,
+        )) {
+            1 -> if (night) ShadePreset(8f, 4f, .40f, 10f, 4f, 8f, .30f, false)
+                else ShadePreset(98f, 2f, .55f, 95f, 3f, -5f, .45f, false)
+            2 -> if (night) ShadePreset(16f, 26f, .58f, 13f, 16f, 7f, .40f, true)
+                else ShadePreset(93f, 22f, .62f, 92f, 14f, -6f, .50f, true)
+            else -> null
+        }
+    }
+
+    private fun presetColor(
+        context: Context,
+        preset: ShadePreset,
+        blurSupported: Boolean,
+        notification: Boolean,
+    ): Int {
+        val hue = Cam.fromInt(context.getColor(
+            if (preset.useAccent) android.R.color.system_accent1_500
+            else android.R.color.system_neutral1_500
+        )).hue
+        val baseTone = if (blurSupported) preset.panelTone else preset.fallbackTone
+        val tone = if (notification) baseTone + preset.cardToneOffset else baseTone
+        val chroma = if (blurSupported) preset.panelChroma else preset.fallbackChroma
+        val alpha = if (!blurSupported) 1f else if (notification) preset.cardAlpha else preset.panelAlpha
+        return ColorUtils.setAlphaComponent(
+            Cam.getInt(hue, chroma, tone.coerceIn(0f, 100f)), (alpha * 255).roundToInt(),
+        )
+    }
+
+    @JvmStatic
+    fun liquidGlassNotificationTint(context: Context): Int? {
+        if (!LiquidGlass.isDualToneShade(context)) return null
+        val alpha = (LiquidGlassTune.f("dual_tone", 0.12f).coerceIn(0f, 1f) * 255).roundToInt()
+        return ColorUtils.setAlphaComponent(context.getColor(R.color.notification_scrim_base), alpha)
+    }
 
     @JvmField
     val CUSTOM_COLOR_KEYS = arrayOf(
@@ -47,6 +113,14 @@ object ShadeColors {
         withScrim: Boolean,
         allowCustomColor: Boolean = true,
     ): Int {
+        if (!allowCustomColor || getCustomShadeColor(context) == null) {
+            shadePreset(context)?.let { preset ->
+                val panel = presetColor(context, preset, blurSupported, notification = false)
+                return if (withScrim && blurSupported && preset.useAccent) {
+                    ColorUtils.compositeColors(panel, shadePanelScrimBehind(context))
+                } else panel
+            }
+        }
         return if (blurSupported) {
             if (withScrim) {
                 ColorUtils.compositeColors(
@@ -68,6 +142,10 @@ object ShadeColors {
         blurSupported: Boolean,
         allowCustomColor: Boolean = true,
     ): Int {
+        if (!allowCustomColor || getCustomNotifScrimColor(context) == null) {
+            if (blurSupported) liquidGlassNotificationTint(context)?.let { return it }
+            shadePreset(context)?.let { return presetColor(context, it, blurSupported, notification = true) }
+        }
         return if (blurSupported) {
             notificationScrimStandard(context, allowCustomColor)
         } else {
