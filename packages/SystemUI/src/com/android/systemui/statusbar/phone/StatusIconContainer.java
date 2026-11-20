@@ -70,6 +70,14 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
     private int mIconDotFrameWidth;
     private boolean mQsExpansionTransitioning;
     private boolean mShouldRestrictIcons = true;
+    // Opt-in only for the Ax QS header: correct network-speed padding accounting.
+    private boolean mFixQsNetworkSpeedWidth = false;
+
+    public void setFixQsNetworkSpeedWidth(boolean enabled) {
+        if (mFixQsNetworkSpeedWidth == enabled) return;
+        mFixQsNetworkSpeedWidth = enabled;
+        requestLayout();
+    }
     // Used to count which states want to be visible during layout
     private ArrayList<StatusIconState> mLayoutStates = new ArrayList<>();
     // So we can count and measure properly
@@ -435,11 +443,18 @@ public class StatusIconContainer extends AlphaOptimizedLinearLayout {
         return (StatusIconState) child.getTag(R.id.status_bar_view_state_tag);
     }
 
-    private static int getViewTotalMeasuredWidth(View child) {
+    private int getViewTotalMeasuredWidth(View child) {
+        // NetworkSpeedView already includes its own padding in the measured width.
+        if (mFixQsNetworkSpeedWidth && child instanceof NetworkSpeedView) {
+            return child.getMeasuredWidth();
+        }
         return child.getMeasuredWidth() + child.getPaddingStart() + child.getPaddingEnd();
     }
 
-    private static int getViewTotalWidth(View child) {
+    private int getViewTotalWidth(View child) {
+        if (mFixQsNetworkSpeedWidth && child instanceof NetworkSpeedView) {
+            return child.getWidth();
+        }
         return child.getWidth() + child.getPaddingStart() + child.getPaddingEnd();
     }
 

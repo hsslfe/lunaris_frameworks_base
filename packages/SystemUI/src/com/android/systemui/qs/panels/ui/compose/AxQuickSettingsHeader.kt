@@ -340,6 +340,7 @@ private fun AxStatusIcons(
     } else {
         val statusIconContext = LocalStatusIconContext.current
         val iconContainer = statusIconContext.iconContainer(AxQuickSettingsHeaderContent)
+        iconContainer.setFixQsNetworkSpeedWidth(true)
         val iconManager = statusIconContext.iconManager(AxQuickSettingsHeaderContent)
         val movableContent =
             remember(statusIconContext, iconManager) {
