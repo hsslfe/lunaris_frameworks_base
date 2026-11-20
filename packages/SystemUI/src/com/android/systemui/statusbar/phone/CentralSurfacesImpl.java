@@ -3100,11 +3100,16 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
     @Override
     public void notifyBiometricAuthModeChanged() {
-        if (Flags.updateKeyguardOnWakeAndUnlockEarlier()) {
-            if (mBiometricUnlockController.isWakeAndUnlock()) {
-                // If we're wake and unlocking we should hide the keyguard ASAP if necessary.
-                updateIsKeyguard();
-            }
+        if (mBiometricUnlockController.isWakeAndUnlock()) {
+            // On fingerprint wake-and-unlock, clear the keyguard status-bar state
+            // before the display wakes. Waiting for onDozingChanged can briefly
+            // expose the lockscreen while the direct-to-GONE transition catches up.
+            Log.d("LunarisUnlockTrace", "CENTRAL_EARLY_KEYGUARD_HIDE before="
+                    + mStatusBarStateController.getState()
+                    + " interactive=" + mDeviceInteractive);
+            updateIsKeyguard();
+            Log.d("LunarisUnlockTrace", "CENTRAL_EARLY_KEYGUARD_HIDE after="
+                    + mStatusBarStateController.getState());
         }
         mDozeServiceHost.updateDozing();
         if (mBiometricUnlockController.getMode()
