@@ -265,6 +265,7 @@ private fun PinPadButton(
     val isPressed by interactionSource.collectIsPressedAsState()
     val glass = liquidGlassEnabled() && backgroundColor.alpha > 0f
     val indication = LocalIndication.current.takeUnless { isPressed || glass }
+    val view = LocalView.current
 
     // Pin button animation specification is asymmetric: fast animation to the pressed state, and a
     // slow animation upon release. Note that isPressed is guaranteed to be true for at least the
@@ -295,7 +296,7 @@ private fun PinPadButton(
         animateColorAsState(
             when {
                 isPressed -> Color.White.copy(alpha = 0.45f)
-                lockscreenTimeoutDeactivatePinPad() && !isEnabled ->
+                !isEnabled ->
                     LiquidGlassControl.copy(alpha = LiquidGlassControl.alpha * 0.4f)
                 else -> LiquidGlassControl
             },
