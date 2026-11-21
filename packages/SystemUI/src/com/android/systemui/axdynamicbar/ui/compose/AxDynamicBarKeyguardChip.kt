@@ -756,25 +756,25 @@ private fun KeyguardChipBody(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             KeyguardPrimaryText(ev, styledContentColor, Modifier.weight(1f, fill = false).widthIn(max = 110.dp), batteryString)
                             val secondary = secondaryTextFor(ev)
-                        if (secondary != null) {
-                            Text(
-                                " · ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = styledContentColor.copy(alpha = AlphaTertiary),
-                            )
-                            Text(
-                                secondary,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = styledContentColor.copy(alpha = AlphaSecondary),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 60.dp).then(
-                                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
-                                    else Modifier
-                                ),
-                            )
+                            if (secondary != null) {
+                                Text(
+                                    " · ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = styledContentColor.copy(alpha = AlphaTertiary),
+                                )
+                                Text(
+                                    secondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = styledContentColor.copy(alpha = AlphaSecondary),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 60.dp).then(
+                                        if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                        else Modifier
+                                    ),
+                                )
+                            }
                         }
-                    }
                     }
                 }
             }
@@ -1133,9 +1133,9 @@ private fun NowBarResponsiveChargingText(
                     if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
                 ),
             )
-            if (showDetails) {
+            if (showDetails && secondaryText != null) {
                 Text(
-                    text = secondaryText!!,
+                    text = secondaryText,
                     style = PillPrimary.copy(fontSize = detailFontSp.sp),
                     color = color.copy(alpha = AlphaSecondary),
                     maxLines = 1,
