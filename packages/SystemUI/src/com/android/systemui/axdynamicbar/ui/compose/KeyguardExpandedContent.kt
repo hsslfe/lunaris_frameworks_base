@@ -2,6 +2,8 @@
 
 package com.android.systemui.axdynamicbar.ui.compose
 
+import android.graphics.drawable.Drawable
+
 import androidx.compose.animation.AnimatedVisibilityScope
 
 import androidx.compose.animation.AnimatedContent
@@ -116,6 +118,39 @@ import kotlinx.coroutines.flow.drop
 
 private val KeyguardMediaMaxHeight = 640.dp
 private val KeyguardMediaArtworkMaxSize = 340.dp
+
+/**
+ * A media application may recreate Drawable wrappers on every playback-state
+ * update. Using those wrappers as Crossfade targets causes the album and its
+ * blurred background to flicker even when the track has not changed.
+ *
+ * Keep one valid artwork snapshot per displayed track (and media application),
+ * including during pause/resume or temporary null-artwork updates. A genuine
+ * track change produces a different key and still crossfades normally.
+ */
+internal data class KeyguardMediaArtworkFrame(
+    val trackId: String,
+    val drawable: Drawable?,
+)
+
+@Composable
+internal fun rememberKeyguardMediaArtwork(
+    event: IslandEvent.Media,
+): KeyguardMediaArtworkFrame {
+    val observedTrack = "${event.packageName}|${event.track}"
+    var lastTrack by remember { mutableStateOf(observedTrack) }
+    if (event.track.isNotBlank() && lastTrack != observedTrack) {
+        lastTrack = observedTrack
+    }
+    val trackId = if (event.track.isBlank()) lastTrack else observedTrack
+    var stableArtwork by remember(trackId) { mutableStateOf(event.albumArt) }
+    if (stableArtwork == null && event.albumArt != null) {
+        stableArtwork = event.albumArt
+    }
+    return remember(trackId, stableArtwork) {
+        KeyguardMediaArtworkFrame(trackId, stableArtwork)
+    }
+}
 
 @Composable
 internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
@@ -258,7 +293,10 @@ private fun KeyguardMediaPanel(
     interactor: IslandActions,
     modifier: Modifier,
 ) {
-    val colors = rememberMediaColors(event, useAlbumArt = true)
+    val artworkFrame = rememberKeyguardMediaArtwork(event)
+    // Color extraction follows the retained art, not transient album-art
+    // wrappers supplied by a player when toggling pause or seeking.
+    val colors = rememberMediaColors(event.copy(albumArt = artworkFrame.drawable), useAlbumArt = true)
     val motionScheme = MaterialTheme.motionScheme
 
     BoxWithConstraints(
@@ -282,15 +320,15 @@ private fun KeyguardMediaPanel(
         val sectionSpacing = if (compact) SpaceMd else SpaceLg
 
         Crossfade(
-            targetState = event.albumArt,
+            targetState = artworkFrame,
             modifier = Modifier.matchParentSize(),
             animationSpec = motionScheme.defaultEffectsSpec(),
             label = "kg_media_backdrop",
-        ) { art ->
+        ) { frame ->
             Box(modifier = Modifier.fillMaxSize()) {
-                if (art != null) {
+                if (frame.drawable != null) {
                     Image(
-                        bitmap = art.toSquareScaledBitmap(350.dp),
+                        bitmap = frame.drawable.toSquareScaledBitmap(350.dp),
                         contentDescription = null,
                         modifier = Modifier
                             .matchParentSize()
@@ -344,14 +382,14 @@ private fun KeyguardMediaPanel(
                 contentAlignment = Alignment.Center,
             ) {
                 Crossfade(
-                    targetState = event.albumArt,
+                    targetState = artworkFrame,
                     modifier = Modifier.size(minOf(maxWidth, maxHeight, KeyguardMediaArtworkMaxSize)),
                     animationSpec = motionScheme.defaultEffectsSpec(),
                     label = "kg_media_album_art",
-                ) { art ->
-                    if (art != null) {
+                ) { frame ->
+                    if (frame.drawable != null) {
                         Image(
-                            bitmap = art.toSquareScaledBitmap(KeyguardMediaArtworkMaxSize),
+                            bitmap = frame.drawable.toSquareScaledBitmap(KeyguardMediaArtworkMaxSize),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxSize()
