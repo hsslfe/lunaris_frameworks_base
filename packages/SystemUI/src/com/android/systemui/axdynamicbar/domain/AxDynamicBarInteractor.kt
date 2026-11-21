@@ -164,6 +164,7 @@ constructor(
         }
 
         _isOnKeyguard.value = statusBarStateController.state == StatusBarState.KEYGUARD
+        repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
         prioritizeMusicOnKeyguardEntry = _isOnKeyguard.value && !_isDozing.value
         _isKeyguardFadingAway.value = keyguardStateController.isKeyguardFadingAway
         _isBouncerShowing.value = keyguardStateController.isPrimaryBouncerShowing
@@ -195,6 +196,7 @@ constructor(
                         prioritizeMusicOnKeyguardEntry = false
                     }
                     _isOnKeyguard.value = newState == StatusBarState.KEYGUARD
+                    repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
                     updateChipVisibility()
                 }
 
@@ -203,6 +205,7 @@ constructor(
                         prioritizeMusicOnKeyguardEntry = true
                     }
                     _isDozing.value = dozing
+                    repository.setNowBarLockscreenActive(_isOnKeyguard.value && !dozing)
                     updateChipVisibility()
                 }
 
