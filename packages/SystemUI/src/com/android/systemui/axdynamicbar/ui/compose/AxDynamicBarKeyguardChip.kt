@@ -15,6 +15,8 @@ import com.android.compose.animation.rememberExpandableController
 import com.android.systemui.animation.Expandable as SystemUiExpandable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -204,6 +206,7 @@ fun AxDynamicBarKeyguardChip(
 ) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
     val isKeyguardChipVisible by viewModel.isKeyguardChipVisible.collectAsStateWithLifecycle()
+    val hasVisibleKeyguardText by viewModel.hasVisibleKeyguardText.collectAsStateWithLifecycle()
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()
     val isKeyguardMusicPillEnabled by viewModel.isKeyguardMusicPillEnabled.collectAsStateWithLifecycle()
@@ -219,7 +222,8 @@ fun AxDynamicBarKeyguardChip(
         it !is IslandEvent.Charging || batteryInfo.isCharging
     } == true
     val showIdleBatteryOnly = nowBarStyle.enabled && nowBarStyle.charging &&
-        nowBarStyle.batteryMode == 1 && !batteryInfo.isCharging && !hasNowBarActivity
+        nowBarStyle.batteryMode == 1 && !batteryInfo.isCharging &&
+        !hasNowBarActivity && !hasVisibleKeyguardText
 
     val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
@@ -255,16 +259,19 @@ fun AxDynamicBarKeyguardChip(
 
         AnimatedVisibility(
             visible = isKeyguardChipVisible && !isKeyguardExpanded,
-            enter = fadeIn(tween(durationMillis = 200, delayMillis =
-                if (showIdleBatteryOnly) 0 else 300)) +
-                scaleIn(
-                    initialScale = 0.9f,
-                    animationSpec = tween(
-                        durationMillis = 200,
-                        delayMillis = if (showIdleBatteryOnly) 0 else 300,
+            // The idle battery pill instantly yields to an indication and
+            // reappears as soon as its text clears. Real activity animations
+            // remain unchanged.
+            enter = if (showIdleBatteryOnly) EnterTransition.None else
+                fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
+                    scaleIn(
+                        initialScale = 0.9f,
+                        animationSpec = tween(durationMillis = 200, delayMillis = 300),
                     ),
-                ),
-            exit = fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
+            exit = if (nowBarStyle.enabled && !hasNowBarActivity)
+                ExitTransition.None else
+                fadeOut(motionScheme.fastEffectsSpec()) +
+                    scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .pointerInput(viewModel, state?.event?.id) {
@@ -302,8 +309,8 @@ fun AxDynamicBarKeyguardChip(
         ) {
             val chipState = state
             if (nowBarStyle.enabled && !hasNowBarActivity) {
-                // In Always mode, the compact pill appears without an extra
-                // 300ms entrance delay, with bottom lockscreen hints visible.
+                // The compact pill is mutually exclusive with lockscreen
+                // indication text. Neither alters Dynamic Bar's battery UI.
                 if (showIdleBatteryOnly) {
                     NowBarIdleBatteryChip(info = batteryInfo)
                 }
