@@ -215,6 +215,11 @@ fun AxDynamicBarKeyguardChip(
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
+    val hasNowBarActivity = state?.allEvents?.any {
+        it !is IslandEvent.Charging || batteryInfo.isCharging
+    } == true
+    val showIdleBatteryOnly = nowBarStyle.enabled && nowBarStyle.charging &&
+        nowBarStyle.batteryMode == 1 && !batteryInfo.isCharging && !hasNowBarActivity
 
     val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
@@ -250,10 +255,14 @@ fun AxDynamicBarKeyguardChip(
 
         AnimatedVisibility(
             visible = isKeyguardChipVisible && !isKeyguardExpanded,
-            enter = fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
+            enter = fadeIn(tween(durationMillis = 200, delayMillis =
+                if (showIdleBatteryOnly) 0 else 300)) +
                 scaleIn(
                     initialScale = 0.9f,
-                    animationSpec = tween(durationMillis = 200, delayMillis = 300),
+                    animationSpec = tween(
+                        durationMillis = 200,
+                        delayMillis = if (showIdleBatteryOnly) 0 else 300,
+                    ),
                 ),
             exit = fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
             modifier = Modifier
@@ -292,16 +301,10 @@ fun AxDynamicBarKeyguardChip(
                 },
         ) {
             val chipState = state
-            // Ignore a stale charging activity as soon as charging stops.
-            // This keeps the idle battery pill in sync with bottom-text visibility.
-            val hasNowBarActivity = chipState?.allEvents?.any {
-                it !is IslandEvent.Charging || batteryInfo.isCharging
-            } == true
             if (nowBarStyle.enabled && !hasNowBarActivity) {
-                // In Always mode, show only a compact battery icon and percentage.
-                // Normal lockscreen hints below the pill remain visible.
-                if (nowBarStyle.charging && nowBarStyle.batteryMode == 1 &&
-                    !batteryInfo.isCharging) {
+                // In Always mode, the compact pill appears without an extra
+                // 300ms entrance delay, with bottom lockscreen hints visible.
+                if (showIdleBatteryOnly) {
                     NowBarIdleBatteryChip(info = batteryInfo)
                 }
             } else if (chipState != null) {
