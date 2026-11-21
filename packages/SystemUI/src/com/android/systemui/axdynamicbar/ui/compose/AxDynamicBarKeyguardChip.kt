@@ -292,9 +292,14 @@ fun AxDynamicBarKeyguardChip(
                 },
         ) {
             val chipState = state
-            if (nowBarStyle.enabled && chipState?.allEvents.isNullOrEmpty()) {
-                // Now Bar's own Always mode shows a small idle battery chip.
-                // Never fall back to the separate Dynamic Bar battery preference.
+            // Ignore a stale charging activity as soon as charging stops.
+            // This keeps the idle battery pill in sync with bottom-text visibility.
+            val hasNowBarActivity = chipState?.allEvents?.any {
+                it !is IslandEvent.Charging || batteryInfo.isCharging
+            } == true
+            if (nowBarStyle.enabled && !hasNowBarActivity) {
+                // In Always mode, show only a compact battery icon and percentage.
+                // Normal lockscreen hints below the pill remain visible.
                 if (nowBarStyle.charging && nowBarStyle.batteryMode == 1 &&
                     !batteryInfo.isCharging) {
                     NowBarIdleBatteryChip(info = batteryInfo)
@@ -305,7 +310,10 @@ fun AxDynamicBarKeyguardChip(
                     when {
                         // Swipe navigation updates pinnedIndex/event in the interactor;
                         // do not force media to the front when another Now Bar event is selected.
-                        nowBarStyle.enabled -> chipState.event
+                        nowBarStyle.enabled -> if (
+                            chipState.event is IslandEvent.Charging && !batteryInfo.isCharging
+                        ) chipState.allEvents.firstOrNull { it !is IslandEvent.Charging }
+                          else chipState.event
                         !isKeyguardDynamicBarEnabled -> chipState.allEvents.firstOrNull {
                             isKeyguardMusicPillEnabled && it is IslandEvent.Media
                         }
