@@ -86,6 +86,7 @@ import kotlinx.coroutines.flow.drop
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -129,6 +130,7 @@ import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.axdynamicbar.shared.*
 import com.android.systemui.axdynamicbar.domain.AxLockscreenNowBarSettings
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
+import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipState
 import com.android.systemui.axdynamicbar.ui.KeyguardBatteryInfo
 import com.android.systemui.res.R
 import kotlinx.coroutines.delay
@@ -233,23 +235,37 @@ fun AxDynamicBarKeyguardChip(
 
     Box(modifier = modifier) {
 
+        // If the currently expanded activity is removed, chipState can turn
+        // null immediately. Keep the last expanded content through the exit
+        // animation rather than collapsing an empty panel down to the pill.
+        var lastExpandedState by remember { mutableStateOf<AxDynamicBarChipState?>(null) }
+        if (isKeyguardChipVisible && isKeyguardExpanded && state != null) {
+            lastExpandedState = state
+        }
         val expandedVisibleState = remember { MutableTransitionState(false) }
         expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded && state != null
         LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
             if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+                lastExpandedState = null
                 viewModel.keyguardExpansion.notifyCollapseSettled()
             }
         }
         AnimatedVisibility(
             visibleState = expandedVisibleState,
             enter = fadeIn(motionScheme.defaultEffectsSpec()),
-            exit = fadeOut(tween(durationMillis = 250)),
+            exit = if (nowBarStyle.enabled)
+                fadeOut(tween(durationMillis = 220)) +
+                    scaleOut(targetScale = 0.97f, animationSpec = tween(durationMillis = 220))
+            else fadeOut(tween(durationMillis = 250)),
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center),
         ) {
-            state?.let {
-                // Keep Lunaris's existing expanded player for every active Now Bar event.
+            val expandedContentState = if (expandedVisibleState.targetState) state
+                else lastExpandedState
+            expandedContentState?.let {
+                // Retain the last expanded content only until the animation
+                // completes. Original Lunaris expanded UI remains unchanged.
                 KeyguardExpandedContent(
                     event = it.event,
                     allEvents = it.allEvents,
