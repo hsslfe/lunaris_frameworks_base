@@ -1234,25 +1234,47 @@ private fun NowBarResponsiveChargingText(
     modifier: Modifier = Modifier,
 ) {
     val parts = rememberChargingParts(batteryString)
-    val detailedText = parts.firstOrNull()?.takeIf { it.isNotBlank() }
-        ?: "${event.level}%"
-    val secondaryText = parts.drop(1).joinToString(" · ").ifBlank {
-        event.timeRemaining.orEmpty()
-    }.takeIf { it.isNotBlank() && it != detailedText }
-    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
-    val compact = availableWidth < 112.dp || heightDp <= 52
-    // A short pill must retain useful text instead of clipping the long
-    // system charging message. Width determines how much detail fits.
-    val mainText = when {
-        !compact -> detailedText
-        availableWidth < 90.dp -> "${event.level}%"
-        else -> "${event.level}% · ${stringResource(R.string.ax_dynamic_bar_charging)}"
+    val defaultChargingLabel = stringResource(R.string.ax_dynamic_bar_charging)
+    val chargingMessage = parts.firstOrNull().orEmpty()
+    // The OS already supplies the localized charging-speed category. Remove
+    // the percentage/time suffix; don't make it oversized in a narrow pill.
+    val speedLabel = remember(chargingMessage, defaultChargingLabel) {
+        chargingMessage
+            .replace(Regex("""[\d.,]+\s*%"""), "")
+            .substringBefore(" · ")
+            .substringBefore("•")
+            .substringBefore(",")
+            .trim(' ', '·', '(', ')', '-', '–')
+            .ifBlank { defaultChargingLabel }
     }
-    val showDetails = heightDp >= 60 && availableWidth >= 136.dp &&
-        secondaryText != null
-    val baseFontSp = (heightDp * 0.26f).coerceIn(11f, 18f)
-    val primaryFontSp = if (compact) baseFontSp.coerceAtMost(13f) else baseFontSp
-    val detailFontSp = (heightDp * 0.18f).coerceIn(10f, 14f)
+    // LOCKSCREEN_BATTERY_INFO controls whether the controller appends
+    // actual reported amps, watts, volts and temperature. Retain them all.
+    val detailItems = remember(parts) {
+        parts.drop(1).flatMap { it.split(" · ") }
+            .map { it.trim() }.filter { it.isNotEmpty() }
+    }
+    val detailText = detailItems.joinToString(" · ")
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val availableTextDp = availableWidth.value.coerceAtLeast(32f)
+    // Fit "Charging slowly", "Charging rapidly" etc. to the measured width
+    // and selected height, including the smallest 48dp pill.
+    val heightFontSp = (heightDp * 0.22f).coerceIn(9f, 14f)
+    val widthFontSp = (availableTextDp / (speedLabel.length.coerceAtLeast(1) * 0.51f))
+        .coerceAtLeast(9f)
+    val primaryFontSp = minOf(heightFontSp, widthFontSp)
+    val detailFontSp = (heightDp * 0.17f).coerceIn(9f, 11f)
+    val rotateDetails = detailItems.size > 1 &&
+        detailText.length * detailFontSp * 0.51f > availableTextDp
+    var detailIndex by remember(detailItems, rotateDetails) { mutableIntStateOf(0) }
+    LaunchedEffect(detailItems, rotateDetails) {
+        if (rotateDetails) {
+            while (true) {
+                delay(2300L)
+                detailIndex = (detailIndex + 1) % detailItems.size
+            }
+        }
+    }
+    val visibleDetails = if (rotateDetails) detailItems[detailIndex] else detailText
 
     Column(
         modifier = modifier,
@@ -1260,7 +1282,7 @@ private fun NowBarResponsiveChargingText(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = mainText,
+            text = speedLabel,
             style = PillPrimary.copy(fontSize = primaryFontSp.sp),
             color = color,
             maxLines = 1,
@@ -1270,9 +1292,12 @@ private fun NowBarResponsiveChargingText(
                 if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
             ),
         )
-        if (showDetails && secondaryText != null) {
+        if (detailItems.isNotEmpty()) {
+            // Always render the measurement line if system battery information
+            // is enabled. At narrow widths rotate individual readings instead
+            // of clipping wattage or temperature; no new background polling.
             Text(
-                text = secondaryText,
+                text = visibleDetails,
                 style = PillPrimary.copy(fontSize = detailFontSp.sp),
                 color = color.copy(alpha = AlphaSecondary),
                 maxLines = 1,
