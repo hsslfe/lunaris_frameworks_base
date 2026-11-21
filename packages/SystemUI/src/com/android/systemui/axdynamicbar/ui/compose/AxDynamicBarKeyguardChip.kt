@@ -1642,7 +1642,7 @@ private fun MarqueeText(text: String, color: Color, modifier: Modifier) {
             else PillPrimary,
         maxLines = 1,
         overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
-        textAlign = if (customMaxWidth != null) TextAlign.Center else TextAlign.Start,
+        textAlign = if (customMaxWidth != null) TextAlign.Center else TextAlign.Unspecified,
         modifier = modifier.widthIn(max = customMaxWidth ?: 120.dp).then(
             if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
         ),
