@@ -268,8 +268,6 @@ constructor(
                         kg && nowBar.enabled -> nowBar.shows(e)
                         kg && e is IslandEvent.Media -> pillEnabled
                         !kg && enabled -> settings.isEventEnabled(e)
-                        !kg && nowBar.enabled && nowBar.chip ->
-                            (e is IslandEvent.Media || e is IslandEvent.Timer) && nowBar.shows(e)
                         else -> false
                     }
                 } to (kg to dozing)
