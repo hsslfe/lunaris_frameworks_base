@@ -85,10 +85,9 @@ constructor(
         val settingsAllowKeyguard = combine(
             interactor.settings.isEnabled,
             interactor.settings.isKeyguardEnabled,
-            interactor.settings.isKeyguardMusicPillEnabled,
             interactor.settings.nowBarAppearance,
-        ) { enabled, keyguardEnabled, musicPillEnabled, nowBar ->
-            (enabled && keyguardEnabled) || musicPillEnabled || nowBar.enabled
+        ) { enabled, keyguardEnabled, nowBar ->
+            (enabled && keyguardEnabled) || nowBar.enabled
         }
         combine(contextAndDoze, shadeAndBouncer, settingsAllowKeyguard) { a, b, enabled ->
             a && b && enabled
@@ -123,7 +122,7 @@ constructor(
         val state = interactor.uiState.value
         val settings = interactor.settings
         val enabled = (settings.isEnabled.value && settings.isKeyguardEnabled.value) ||
-            settings.isKeyguardMusicPillEnabled.value || settings.nowBarAppearance.value.enabled
+            settings.nowBarAppearance.value.enabled
         if (!enabled || !state.shouldShow || state.topEvent == null ||
             !interactor.isOnKeyguard.value || interactor.isDozing.value ||
             interactor.dozeAmount.value > 0f || interactor.qsExpansion.value > 0f ||
