@@ -293,15 +293,12 @@ fun AxDynamicBarKeyguardChip(
         ) {
             val chipState = state
             if (nowBarStyle.enabled && chipState?.allEvents.isNullOrEmpty()) {
-                // No live Now Bar event: show the existing Dynamic Bar battery pill
-                // according to its Never / While charging / Always setting.
-                // The battery fallback is not a Now Bar activity.
-                KeyguardBatteryChip(
-                    batteryInfo,
-                    keyguardBatteryChipMode,
-                    batteryString,
-                    modifier,
-                )
+                // Now Bar's own Always mode shows a small idle battery chip.
+                // Never fall back to the separate Dynamic Bar battery preference.
+                if (nowBarStyle.charging && nowBarStyle.batteryMode == 1 &&
+                    !batteryInfo.isCharging) {
+                    NowBarIdleBatteryChip(info = batteryInfo)
+                }
             } else if (chipState != null) {
                 val rawEvent = chipState.notificationAlert ?: chipState.event
                 val displayEvent: com.android.systemui.islandevents.model.IslandEvent? =
@@ -846,6 +843,46 @@ private fun KeyguardChipBody(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Now Bar's independent idle battery display, used ONLY when its own "Always"
+ * mode is selected and there are no other activities. Do not apply the
+ * configurable Now Bar width/height to this small 36dp battery-only pill.
+ * The original Dynamic Bar battery implementation below stays unchanged.
+ */
+@Composable
+private fun NowBarIdleBatteryChip(info: KeyguardBatteryInfo) {
+    val accent = if (info.isPowerSave) BatteryPowerSaveColor else BatteryNeutralColor
+    val contentColor = chipContentColorOn(accent)
+    Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.matchParentSize().clip(ChipShape)) {
+            AndroidView(
+                factory = { ctx -> MusicPillBlurHost(ctx) },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .height(ChipHeight)
+                .widthIn(min = 72.dp)
+                .border(BorderStroke(0.3.dp, chipStrokeColor()), ChipShape)
+                .clip(ChipShape)
+                .background(Color.Transparent)
+                .padding(horizontal = SpaceMd),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            AnimatedBatteryFillIcon(info.level, contentColor, BatteryIconSize)
+            Spacer(Modifier.width(SpaceXs))
+            Text(
+                text = "${info.level}%",
+                style = PillPrimary,
+                color = contentColor,
+                maxLines = 1,
+            )
         }
     }
 }
