@@ -102,10 +102,15 @@ constructor(
     override fun bindData(constraintLayout: ConstraintLayout) {
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
-        indicationController.setSuppressIndication(viewModel.shouldSuppressKeyguardIndication.value)
-        indicationController.setSuppressNowBarIndications(
+        val nowBarVisible =
             viewModel.nowBarAppearance.value.enabled && viewModel.isKeyguardChipVisible.value
+        // Hide both keyguard indication rows (charging, prompts, transient and persistent
+        // messages) while the collapsed/expanded Now Bar is on screen. This does not
+        // disable the security challenge itself or the events feeding Now Bar.
+        indicationController.setSuppressIndication(
+            viewModel.shouldSuppressKeyguardIndication.value || nowBarVisible
         )
+        indicationController.setSuppressNowBarIndications(nowBarVisible)
 
         composeView.setContent { PlatformTheme { AxDynamicBarKeyguardChip(viewModel = viewModel) } }
 
@@ -113,9 +118,17 @@ constructor(
             composeView.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     launch {
-                        viewModel.shouldSuppressKeyguardIndication.collect {
-                            indicationController.setSuppressIndication(it)
+                        // Single combined source of truth: the original Dynamic Bar
+                        // suppression cannot overwrite active Now Bar suppression.
+                        combine(
+                            viewModel.shouldSuppressKeyguardIndication,
+                            viewModel.nowBarAppearance,
+                            viewModel.isKeyguardChipVisible,
+                        ) { legacySuppress, nowBar, visible ->
+                            legacySuppress || (nowBar.enabled && visible)
                         }
+                            .distinctUntilChanged()
+                            .collect { indicationController.setSuppressIndication(it) }
                     }
                     combine(viewModel.nowBarAppearance, viewModel.isKeyguardChipVisible) {
                             nowBar, visible -> nowBar.enabled && visible
