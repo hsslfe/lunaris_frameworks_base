@@ -73,6 +73,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -136,6 +138,9 @@ private val ChipShape = ShapeChip
 private val ChipIconSize = ChipHeight - SpaceLg
 private val MusicChipHeight = 58.dp
 private val MusicChipMinWidth = 130.dp
+
+// Scoped to the collapsed pill only. Expanded Lunaris content keeps its own text behavior.
+private val LocalNowBarMarqueeEnabled = compositionLocalOf { true }
 private val MusicActionSize = MusicChipHeight - 16.dp
 private val MusicActionIconSize = MusicChipHeight - 26.dp
 private val MusicPlayPauseSize = MusicChipHeight - 24.dp
@@ -365,19 +370,24 @@ fun AxDynamicBarKeyguardChip(
                                 chipState.eventCount
                             else chipState.allEvents.count { it !is IslandEvent.Media }
                         }
-                        KeyguardChipBody(
-                            event = event,
-                            accent = accent,
-                            contentColor = contentColor,
-                            progress = progress,
-                            eventCount = keyguardEventCount,
-                            selectedEventIndex = chipState.pinnedIndex,
-                            viewModel = viewModel,
-                            nowBarStyle = nowBarStyle.takeIf { it.enabled },
-                            isDozing = isDozing,
-                            batteryString = batteryString,
-                            aospChipExpandable = expandable,
-                        )
+                        CompositionLocalProvider(
+                            LocalNowBarMarqueeEnabled provides
+                                (!nowBarStyle.enabled || nowBarStyle.scrollText)
+                        ) {
+                            KeyguardChipBody(
+                                event = event,
+                                accent = accent,
+                                contentColor = contentColor,
+                                progress = progress,
+                                eventCount = keyguardEventCount,
+                                selectedEventIndex = chipState.pinnedIndex,
+                                viewModel = viewModel,
+                                nowBarStyle = nowBarStyle.takeIf { it.enabled },
+                                isDozing = isDozing,
+                                batteryString = batteryString,
+                                aospChipExpandable = expandable,
+                            )
+                        }
                     }
                 }
             } else if (isKeyguardDynamicBarEnabled && !nowBarStyle.enabled) {
@@ -411,6 +421,7 @@ private fun KeyguardChipBody(
     val popupAnchor = LocalView.current
     val motionScheme = MaterialTheme.motionScheme
     var toggleCount by remember { mutableIntStateOf(0) }
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
     val onPillClick: () -> Unit = {
         when (event) {
             is IslandEvent.Notification ->
@@ -601,7 +612,10 @@ private fun KeyguardChipBody(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().basicMarquee(iterations = 1),
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                else Modifier
+                            ),
                         )
                         if (ev.artist.isNotBlank() &&
                             (nowBarStyle == null || nowBarStyle.text == 1)) {
@@ -731,7 +745,10 @@ private fun KeyguardChipBody(
                                 color = styledContentColor.copy(alpha = AlphaSecondary),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 60.dp).basicMarquee(iterations = 1),
+                                modifier = Modifier.widthIn(max = 60.dp).then(
+                                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                    else Modifier
+                                ),
                             )
                         }
                     }
@@ -1395,13 +1412,16 @@ private fun chipStrokeColor(): Color {
 
 @Composable
 private fun MarqueeText(text: String, color: Color, modifier: Modifier) {
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
     Text(
         text,
         color = color,
         style = PillPrimary,
         maxLines = 1,
-        overflow = TextOverflow.Clip,
-        modifier = modifier.widthIn(max = 120.dp).basicMarquee(iterations = 1),
+        overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+        modifier = modifier.widthIn(max = 120.dp).then(
+            if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+        ),
     )
 }
 
