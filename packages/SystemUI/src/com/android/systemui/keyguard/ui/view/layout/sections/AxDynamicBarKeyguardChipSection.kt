@@ -103,15 +103,25 @@ constructor(
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
         indicationController.setSuppressIndication(viewModel.shouldSuppressKeyguardIndication.value)
+        indicationController.setSuppressNowBarIndications(
+            viewModel.nowBarAppearance.value.enabled && viewModel.isKeyguardChipVisible.value
+        )
 
         composeView.setContent { PlatformTheme { AxDynamicBarKeyguardChip(viewModel = viewModel) } }
 
         bindHandle =
             composeView.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
-                    viewModel.shouldSuppressKeyguardIndication.collect {
-                        indicationController.setSuppressIndication(it)
+                    launch {
+                        viewModel.shouldSuppressKeyguardIndication.collect {
+                            indicationController.setSuppressIndication(it)
+                        }
                     }
+                    combine(viewModel.nowBarAppearance, viewModel.isKeyguardChipVisible) {
+                            nowBar, visible -> nowBar.enabled && visible
+                        }
+                        .distinctUntilChanged()
+                        .collect { indicationController.setSuppressNowBarIndications(it) }
                 }
             }
 
@@ -406,6 +416,7 @@ constructor(
         expansionHandle = null
         bindHandle?.dispose()
         bindHandle = null
+        indicationController.setSuppressNowBarIndications(false)
         indicationController.setSuppressIndication(false)
         setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         constraintLayout.removeView(dismissViewId)
