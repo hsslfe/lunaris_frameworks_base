@@ -76,6 +76,8 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.text.format.Formatter;
 import android.text.style.ImageSpan;
 import android.util.Pair;
@@ -188,6 +190,16 @@ public class KeyguardIndicationController {
     private FaceUnlockImageView mFaceIconView;
     private KeyguardIndicationTextView mTopIndicationView;
     private KeyguardIndicationTextView mLockScreenIndicationView;
+    // Observe the actual text, not queued indications: the compact Now Bar
+    // battery pill must yield only while an indication is on screen.
+    private final List<LockScreenTextListener> mLockScreenTextListeners = new ArrayList<>();
+    private final TextWatcher mLockScreenTextWatcher = new TextWatcher() {
+        @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+        @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+        @Override public void afterTextChanged(Editable s) {
+            notifyLockScreenTextListeners();
+        }
+    };
     private final IBatteryStats mBatteryInfo;
     private final SettableWakeLock mWakeLock;
     private final DockManager mDockManager;
@@ -328,6 +340,35 @@ public class KeyguardIndicationController {
 
     public interface IndicationListener {
         void onIndicationUpdated(int type, @Nullable CharSequence text);
+    }
+
+    /** A change to the currently displayed bottom lock-screen text. */
+    public interface LockScreenTextListener {
+        void onLockScreenTextVisibilityChanged(boolean hasVisibleText);
+    }
+
+    public boolean hasVisibleLockScreenText() {
+        return mVisible && !mDozing && !mSuppressIndication
+                && mLockScreenIndicationView != null
+                && mLockScreenIndicationView.getVisibility() == View.VISIBLE
+                && !TextUtils.isEmpty(mLockScreenIndicationView.getText());
+    }
+
+    public void addLockScreenTextListener(LockScreenTextListener listener) {
+        mLockScreenTextListeners.add(listener);
+        listener.onLockScreenTextVisibilityChanged(hasVisibleLockScreenText());
+    }
+
+    public void removeLockScreenTextListener(LockScreenTextListener listener) {
+        mLockScreenTextListeners.remove(listener);
+    }
+
+    private void notifyLockScreenTextListeners() {
+        if (mLockScreenTextListeners.isEmpty()) return;
+        final boolean hasText = hasVisibleLockScreenText();
+        for (LockScreenTextListener listener : new ArrayList<>(mLockScreenTextListeners)) {
+            listener.onLockScreenTextVisibilityChanged(hasText);
+        }
     }
     public static final int AX_TYPE_BIOMETRIC = 0;
     public static final int AX_TYPE_TRANSIENT = 1;
@@ -508,6 +549,9 @@ public class KeyguardIndicationController {
     }
 
     public void setIndicationArea(ViewGroup indicationArea) {
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.removeTextChangedListener(mLockScreenTextWatcher);
+        }
         mIndicationArea = indicationArea;
         mTopIndicationView = indicationArea.findViewById(R.id.keyguard_indication_text);
         mLockScreenIndicationView = indicationArea.findViewById(
@@ -536,7 +580,11 @@ public class KeyguardIndicationController {
                 mStatusBarStateController,
                 mKeyguardLogger
         );
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.addTextChangedListener(mLockScreenTextWatcher);
+        }
         updateDeviceEntryIndication(false /* animate */);
+        notifyLockScreenTextListeners();
         updateOrganizedOwnedDevice();
         if (mBroadcastReceiver == null) {
             // Update the disclosure proactively to avoid IPC on the critical path.
@@ -1044,6 +1092,7 @@ public class KeyguardIndicationController {
         if (!suppress && mVisible) {
             updateDeviceEntryIndication(false);
         }
+        notifyLockScreenTextListeners();
     }
 
     /**
@@ -1065,6 +1114,7 @@ public class KeyguardIndicationController {
             // If we unlock and return to keyguard quickly, previous error should not be shown
             hideTransientIndication();
         }
+        notifyLockScreenTextListeners();
     }
 
     private void setPersistentUnlockMessage(String persistentUnlockMessage) {
