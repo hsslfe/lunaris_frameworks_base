@@ -180,7 +180,7 @@ constructor(
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 
-    /** Real Now Bar activity, excluding the optional Dynamic Bar battery-only fallback. */
+    /** Actual Now Bar activity, excluding its own compact idle-battery display. */
     val isNowBarActivityVisible: StateFlow<Boolean> =
         combine(isOnKeyguard, nowBarAppearance, interactor.isDozing, chipState) {
                 onKeyguard, nowBar, dozing, state ->
@@ -197,18 +197,17 @@ constructor(
             combine(
                 isKeyguardMusicPillEnabled, nowBarAppearance, interactor.isDozing,
             ) { pill, style, dozing -> Triple(pill, style, dozing) },
-            combine(chipState, keyguardBatteryChipMode, keyguardBatteryInfo) {
-                    state, batteryMode, batteryInfo ->
-                Triple(state, batteryMode, batteryInfo.isCharging)
+            combine(chipState, keyguardBatteryInfo) { state, info ->
+                state to info.isCharging
             },
         ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing),
-                (state, batteryMode, charging) ->
+                (state, charging) ->
             onKeyguard && if (nowBar.enabled) {
-                // A real Now Bar activity takes priority. When none exists,
-                // honor the existing battery preference independently of Dynamic Bar:
-                // 0 = never, 1 = charging only, 2 = always.
+                // An actual activity uses the regular Now Bar. The independently
+                // enabled Always mode allows a compact icon + percent pill only
+                // while idle; never read Dynamic Bar's battery preference here.
                 !dozing && (state?.allEvents?.isNotEmpty() == true ||
-                    batteryMode == 2 || (batteryMode == 1 && charging))
+                    (nowBar.charging && nowBar.batteryMode == 1 && !charging))
             } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
