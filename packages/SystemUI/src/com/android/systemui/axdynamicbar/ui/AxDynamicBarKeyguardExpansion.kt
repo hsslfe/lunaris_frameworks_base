@@ -21,6 +21,8 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -33,7 +35,9 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class AxDynamicBarKeyguardExpansion
 @Inject
@@ -46,6 +50,17 @@ constructor(
     private val hasChip =
         interactor.uiState
             .map { it.shouldShow && it.topEvent != null }
+            .distinctUntilChanged()
+            .transformLatest { present ->
+                // During a track switch the media event can momentarily vanish.
+                // A short cancellable grace period avoids collapsing the whole
+                // Now Bar and flashing the wallpaper for a transient empty list.
+                // Dynamic Bar retains its original immediate behaviour.
+                if (!present && interactor.settings.nowBarAppearance.value.enabled) {
+                    delay(280L)
+                }
+                emit(present)
+            }
             .distinctUntilChanged()
 
     val canShow: StateFlow<Boolean> = run {
@@ -70,9 +85,9 @@ constructor(
         val settingsAllowKeyguard = combine(
             interactor.settings.isEnabled,
             interactor.settings.isKeyguardEnabled,
-            interactor.settings.isKeyguardMusicPillEnabled,
-        ) { enabled, keyguardEnabled, musicPillEnabled ->
-            (enabled && keyguardEnabled) || musicPillEnabled
+            interactor.settings.nowBarAppearance,
+        ) { enabled, keyguardEnabled, nowBar ->
+            (enabled && keyguardEnabled) || nowBar.enabled
         }
         combine(contextAndDoze, shadeAndBouncer, settingsAllowKeyguard) { a, b, enabled ->
             a && b && enabled
@@ -98,16 +113,13 @@ constructor(
             .onEach { if (!it) collapse() }
             .launchIn(applicationScope)
 
-        interactor.isOnKeyguard
-            .onEach { if (!it) collapse() }
-            .launchIn(applicationScope)
     }
 
     fun expand() {
         val state = interactor.uiState.value
         val settings = interactor.settings
         val enabled = (settings.isEnabled.value && settings.isKeyguardEnabled.value) ||
-            settings.isKeyguardMusicPillEnabled.value
+            settings.nowBarAppearance.value.enabled
         if (!enabled || !state.shouldShow || state.topEvent == null ||
             !interactor.isOnKeyguard.value || interactor.isDozing.value ||
             interactor.dozeAmount.value > 0f || interactor.qsExpansion.value > 0f ||

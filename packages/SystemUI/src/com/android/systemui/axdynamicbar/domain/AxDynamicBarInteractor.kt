@@ -60,6 +60,11 @@ constructor(
     @Volatile private var notifAlertJob: Job? = null
 
     private val dismissedEventIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    // Now Bar's own hidden activities never affect unlocked Dynamic Bar events.
+    private val hiddenNowBarEventIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    // Re-select music once per lockscreen entry/wake; never override manual swipes.
+    @Volatile private var prioritizeMusicOnKeyguardEntry = false
 
     override var onFocusableRequested: ((Boolean) -> Unit)? = null
 
@@ -159,6 +164,8 @@ constructor(
         }
 
         _isOnKeyguard.value = statusBarStateController.state == StatusBarState.KEYGUARD
+        repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
+        prioritizeMusicOnKeyguardEntry = _isOnKeyguard.value && !_isDozing.value
         _isKeyguardFadingAway.value = keyguardStateController.isKeyguardFadingAway
         _isBouncerShowing.value = keyguardStateController.isPrimaryBouncerShowing
 
@@ -181,12 +188,24 @@ constructor(
                 }
 
                 override fun onStateChanged(newState: Int) {
+                    val enteringKeyguard =
+                        newState == StatusBarState.KEYGUARD && !_isOnKeyguard.value
+                    if (enteringKeyguard && !_isDozing.value) {
+                        prioritizeMusicOnKeyguardEntry = true
+                    } else if (newState != StatusBarState.KEYGUARD) {
+                        prioritizeMusicOnKeyguardEntry = false
+                    }
                     _isOnKeyguard.value = newState == StatusBarState.KEYGUARD
+                    repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
                     updateChipVisibility()
                 }
 
                 override fun onDozingChanged(dozing: Boolean) {
+                    if (_isDozing.value && !dozing && _isOnKeyguard.value) {
+                        prioritizeMusicOnKeyguardEntry = true
+                    }
                     _isDozing.value = dozing
+                    repository.setNowBarLockscreenActive(_isOnKeyguard.value && !dozing)
                     updateChipVisibility()
                 }
 
@@ -222,18 +241,25 @@ constructor(
         applicationScope.launch {
             combine(
                 settings.isEnabled,
-                settings.isKeyguardMusicPillEnabled,
+                settings.nowBarAppearance,
                 settings.disabledEventTypes,
-            ) { enabled, pillEnabled, _ ->
-                enabled to pillEnabled
-            }.collect { (enabled, pillEnabled) ->
+            ) { enabled, nowBar, _ ->
+                enabled to nowBar.enabled
+            }.collect { (enabled, nowBarEnabled) ->
                 if (!enabled) dismissNotificationAlert()
-                if (enabled || pillEnabled) repository.startListening()
+                if (nowBarEnabled && settings.nowBarAppearance.value.charging) {
+                    // A charging event started in Dynamic Bar must not auto-dismiss
+                    // after Now Bar takes over its lifetime.
+                    autoDismissJobs.remove("charging")?.cancel()
+                }
+                // Any change to Now Bar's own event types refreshes its source subscriptions.
+                if (enabled || nowBarEnabled) repository.startListening()
                 else {
                     repository.stopListening()
                     autoDismissJobs.values.forEach { it.cancel() }
                     autoDismissJobs.clear()
                     dismissedEventIds.clear()
+                    hiddenNowBarEventIds.clear()
                     repository.clearAllIndicationEvents()
                     _uiState.value = IslandUiState()
                 }
@@ -253,25 +279,31 @@ constructor(
                 combine(settings.isEnabled, settings.isKeyguardEnabled) { enabled, kgEnabled ->
                     enabled to kgEnabled
                 },
-                settings.isKeyguardMusicPillEnabled,
-                _isOnKeyguard,
-            ) { raw, _, (enabled, kgEnabled), pillEnabled, kg ->
+                settings.nowBarAppearance,
+                combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
+            ) { raw, _, (enabled, kgEnabled), nowBar, (kg, dozing) ->
                 raw.filter { e ->
-                    if (kg && e is IslandEvent.Media) {
-                        // The lock screen music pill has its own switch and event source.
-                        pillEnabled
-                    } else {
-                        enabled && (!kg || kgEnabled) && settings.isEventEnabled(e)
+                    when {
+                        kg && nowBar.enabled -> nowBar.shows(e)
+                        // Music on the lock screen is controlled solely by Now Bar.
+                        kg && e is IslandEvent.Media -> false
+                        !kg && enabled -> settings.isEventEnabled(e)
+                        else -> false
                     }
-                } to kg
-            }.collect { (rawEvents, onKeyguard) ->
+                } to (kg to dozing)
+            }.collect { (rawEvents, keyguardAndDoze) ->
+                val (onKeyguard, _) = keyguardAndDoze
                 dismissedEventIds.removeAll { id -> rawEvents.none { it.id == id } }
+                hiddenNowBarEventIds.removeAll { id -> rawEvents.none { it.id == id } }
                 val events = rawEvents.filter { e ->
                     e.id !in dismissedEventIds &&
+                        !(onKeyguard && settings.nowBarAppearance.value.enabled &&
+                            e.id in hiddenNowBarEventIds) &&
                         
                         !(onKeyguard && e is IslandEvent.Notification) &&
                         
-                        !(onKeyguard && e is IslandEvent.Charging) &&
+                        !(onKeyguard && e is IslandEvent.Charging &&
+                            !settings.nowBarAppearance.value.enabled) &&
                         
                         !(onKeyguard && e is IslandEvent.AppSwitch) &&
                         
@@ -310,8 +342,24 @@ constructor(
                 val prevPinnedId =
                     current.events.getOrNull(current.pinnedEventIndex)?.id
 
+                val musicOnEntryIndex =
+                    if (onKeyguard && settings.nowBarAppearance.value.enabled &&
+                        prioritizeMusicOnKeyguardEntry
+                    ) {
+                        val playing = events.indexOfFirst {
+                            it is IslandEvent.Media && it.isPlaying
+                        }
+                        if (playing >= 0) playing
+                        else events.indexOfFirst { it is IslandEvent.Media }
+                    } else -1
+                if (musicOnEntryIndex >= 0) {
+                    prioritizeMusicOnKeyguardEntry = false
+                }
                 val pinnedIndex =
                     when {
+                        // Music is the initial Now Bar card when opening the lockscreen;
+                        // later activity updates and swipe choices keep their own priority.
+                        musicOnEntryIndex >= 0 -> musicOnEntryIndex
                         hasNewEvents -> {
                             val currentIds = current.events.map { it.id }.toSet()
                             events.indexOfFirst { it.id !in currentIds }.coerceAtLeast(0)
@@ -349,7 +397,26 @@ constructor(
         }
     }
 
+    /**
+     * Hide a single Now Bar activity until its source ends, without stopping
+     * playback, a timer, a call, or the torch.
+     */
+    fun hideNowBarEvent(event: IslandEvent) {
+        if (!settings.nowBarAppearance.value.enabled) return
+        hiddenNowBarEventIds.add(event.id)
+        val current = _uiState.value
+        val remaining = current.events.filterNot { it.id == event.id }
+        _uiState.value = current.copy(
+            events = remaining,
+            pinnedEventIndex = current.pinnedEventIndex.coerceAtMost(
+                (remaining.size - 1).coerceAtLeast(0)),
+            islandState = if (remaining.isEmpty()) IslandState.HIDDEN
+                else current.islandState,
+        )
+    }
+
     fun cycleNext() {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (current.events.size <= 1) return
         val next = (current.pinnedEventIndex + 1) % current.events.size
@@ -357,6 +424,7 @@ constructor(
     }
 
     fun cyclePrev() {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (current.events.size <= 1) return
         val prev = (current.pinnedEventIndex - 1 + current.events.size) % current.events.size
@@ -364,6 +432,7 @@ constructor(
     }
 
     fun pinEventAt(index: Int) {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (index < 0 || index >= current.events.size) return
         _uiState.value = current.copy(pinnedEventIndex = index)
@@ -580,7 +649,16 @@ constructor(
     }
 
     private fun scheduleAutoDismiss(event: IslandEvent, delayOverride: Long? = null) {
-        if (!settings.isEnabled.value) return
+        // Keep the charging activity visible until unplugged when enabled in Now Bar.
+        if (event is IslandEvent.Charging &&
+            settings.nowBarAppearance.value.let { it.enabled && it.charging }
+        ) return
+        // Now Bar has its own event lifecycle; do not require Dynamic Bar for
+        // auto-expiring events (for example, a finished recording).
+        if (!settings.isEnabled.value &&
+            !(settings.nowBarAppearance.value.enabled &&
+                settings.nowBarAppearance.value.shows(event))
+        ) return
         val ms = delayOverride ?: event.behavior.autoDismissMs ?: return
         val eventId = event.id
         autoDismissJobs[eventId]?.cancel()

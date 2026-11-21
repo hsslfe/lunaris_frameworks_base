@@ -15,6 +15,8 @@ import com.android.compose.animation.rememberExpandableController
 import com.android.systemui.animation.Expandable as SystemUiExpandable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -42,23 +44,28 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -69,6 +76,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -77,6 +86,7 @@ import kotlinx.coroutines.flow.drop
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -85,6 +95,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -99,7 +111,10 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -108,13 +123,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.axdynamicbar.shared.*
+import com.android.systemui.axdynamicbar.domain.AxLockscreenNowBarSettings
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
+import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipState
 import com.android.systemui.axdynamicbar.ui.KeyguardBatteryInfo
 import com.android.systemui.res.R
 import kotlinx.coroutines.delay
@@ -127,6 +145,12 @@ private val ChipShape = ShapeChip
 private val ChipIconSize = ChipHeight - SpaceLg
 private val MusicChipHeight = 58.dp
 private val MusicChipMinWidth = 130.dp
+
+// Scoped to the collapsed pill only. Expanded Lunaris content keeps its own text behavior.
+private val LocalNowBarMarqueeEnabled = compositionLocalOf { true }
+// Null preserves the original Dynamic Bar typography and its compact text cap.
+private val LocalNowBarTextMaxWidth = compositionLocalOf<Dp?> { null }
+private val LocalNowBarTextFontSp = compositionLocalOf<Float?> { null }
 private val MusicActionSize = MusicChipHeight - 16.dp
 private val MusicActionIconSize = MusicChipHeight - 26.dp
 private val MusicPlayPauseSize = MusicChipHeight - 24.dp
@@ -189,55 +213,99 @@ fun AxDynamicBarKeyguardChip(
 ) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
     val isKeyguardChipVisible by viewModel.isKeyguardChipVisible.collectAsStateWithLifecycle()
+    val hasVisibleKeyguardText by viewModel.hasVisibleKeyguardText.collectAsStateWithLifecycle()
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()
-    val isKeyguardMusicPillEnabled by viewModel.isKeyguardMusicPillEnabled.collectAsStateWithLifecycle()
+    val nowBarStyle by viewModel.nowBarAppearance.collectAsStateWithLifecycle()
+    val isDozing by viewModel.interactor.isDozing.collectAsStateWithLifecycle()
     val keyguardBatteryChipMode by viewModel.keyguardBatteryChipMode.collectAsStateWithLifecycle()
     val batteryInfo by viewModel.keyguardBatteryInfo.collectAsStateWithLifecycle()
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
+    val hasNowBarActivity = state?.allEvents?.any {
+        it !is IslandEvent.Charging || batteryInfo.isCharging
+    } == true
+    val showIdleBatteryOnly = nowBarStyle.enabled && nowBarStyle.charging &&
+        nowBarStyle.batteryMode == 1 && !batteryInfo.isCharging &&
+        !hasNowBarActivity && !hasVisibleKeyguardText
 
     val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
 
     Box(modifier = modifier) {
 
+        // If the currently expanded activity is removed, chipState can turn
+        // null immediately. Keep the last expanded content through the exit
+        // animation rather than collapsing an empty panel down to the pill.
+        var lastExpandedState by remember { mutableStateOf<AxDynamicBarChipState?>(null) }
+        if (isKeyguardChipVisible && isKeyguardExpanded && state != null) {
+            lastExpandedState = state
+        }
         val expandedVisibleState = remember { MutableTransitionState(false) }
-        expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded && state != null
+        expandedVisibleState.targetState =
+            if (nowBarStyle.enabled) {
+                // A track switch can briefly remove the media event. Keep the
+                // expanded content showing its last frame until the expansion
+                // controller's short media-gap grace period completes.
+                isKeyguardExpanded && (state != null || lastExpandedState != null)
+            } else {
+                isKeyguardChipVisible && isKeyguardExpanded && state != null
+            }
         LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
             if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+                lastExpandedState = null
                 viewModel.keyguardExpansion.notifyCollapseSettled()
             }
         }
         AnimatedVisibility(
             visibleState = expandedVisibleState,
             enter = fadeIn(motionScheme.defaultEffectsSpec()),
-            exit = fadeOut(tween(durationMillis = 250)),
+            exit = if (nowBarStyle.enabled)
+                fadeOut(tween(durationMillis = 220)) +
+                    scaleOut(targetScale = 0.97f, animationSpec = tween(durationMillis = 220))
+            else fadeOut(tween(durationMillis = 250)),
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center),
         ) {
-            state?.let {
+            val expandedContentState = if (nowBarStyle.enabled) {
+                state ?: lastExpandedState
+            } else if (expandedVisibleState.targetState) state else lastExpandedState
+            expandedContentState?.let {
+                // Retain the last expanded content only until the animation
+                // completes. Original Lunaris expanded UI remains unchanged.
                 KeyguardExpandedContent(
                     event = it.event,
                     allEvents = it.allEvents,
                     interactor = viewModel.interactor,
                     onCollapse = { viewModel.keyguardExpansion.collapse() },
                     hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
+                    stabilizeMediaArtwork = nowBarStyle.enabled,
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = isKeyguardChipVisible && !isKeyguardExpanded,
-            enter = fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
-                scaleIn(
-                    initialScale = 0.9f,
-                    animationSpec = tween(durationMillis = 200, delayMillis = 300),
-                ),
-            exit = fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
+            visible = isKeyguardChipVisible && !isKeyguardExpanded &&
+                (!nowBarStyle.enabled ||
+                    (expandedVisibleState.isIdle && !expandedVisibleState.currentState)),
+            // Avoid showing the collapsed pill under a still-fading expanded
+            // panel; show it only after the expanded exit has settled.
+            // The idle battery pill instantly yields to an indication and
+            // reappears as soon as its text clears. Real activity animations
+            // remain unchanged.
+            enter = if (showIdleBatteryOnly) EnterTransition.None else
+                fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
+                    scaleIn(
+                        initialScale = 0.9f,
+                        animationSpec = tween(durationMillis = 200, delayMillis = 300),
+                    ),
+            exit = if (nowBarStyle.enabled && !hasNowBarActivity)
+                ExitTransition.None else
+                fadeOut(motionScheme.fastEffectsSpec()) +
+                    scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .pointerInput(viewModel, state?.event?.id) {
@@ -274,14 +342,23 @@ fun AxDynamicBarKeyguardChip(
                 },
         ) {
             val chipState = state
-            if (chipState != null) {
+            if (nowBarStyle.enabled && !hasNowBarActivity) {
+                // The compact pill is mutually exclusive with lockscreen
+                // indication text. Neither alters Dynamic Bar's battery UI.
+                if (showIdleBatteryOnly) {
+                    NowBarIdleBatteryChip(info = batteryInfo)
+                }
+            } else if (chipState != null) {
                 val rawEvent = chipState.notificationAlert ?: chipState.event
                 val displayEvent: com.android.systemui.islandevents.model.IslandEvent? =
                     when {
-                        !isKeyguardDynamicBarEnabled -> chipState.allEvents.firstOrNull {
-                            isKeyguardMusicPillEnabled && it is IslandEvent.Media
-                        }
-                        isKeyguardMusicPillEnabled -> rawEvent
+                        // Swipe navigation updates pinnedIndex/event in the interactor;
+                        // do not force media to the front when another Now Bar event is selected.
+                        nowBarStyle.enabled -> if (
+                            chipState.event is IslandEvent.Charging && !batteryInfo.isCharging
+                        ) chipState.allEvents.firstOrNull { it !is IslandEvent.Charging }
+                          else chipState.event
+                        !isKeyguardDynamicBarEnabled -> null
                         rawEvent is com.android.systemui.islandevents.model.IslandEvent.Media -> {
                             chipState.allEvents.firstOrNull { it !is com.android.systemui.islandevents.model.IslandEvent.Media }
                         }
@@ -289,7 +366,7 @@ fun AxDynamicBarKeyguardChip(
                     }
 
                 if (displayEvent == null) {
-                    if (isKeyguardDynamicBarEnabled) {
+                    if (isKeyguardDynamicBarEnabled && !nowBarStyle.enabled) {
                         KeyguardBatteryChip(
                             batteryInfo,
                             keyguardBatteryChipMode,
@@ -343,23 +420,44 @@ fun AxDynamicBarKeyguardChip(
                         onClick = null,
                         defaultMinSize = false,
                     ) { expandable ->
-                        val keyguardEventCount = remember(chipState.allEvents, isKeyguardMusicPillEnabled) {
-                            if (isKeyguardMusicPillEnabled) chipState.eventCount
+                        val keyguardEventCount = remember(
+                            chipState.allEvents, nowBarStyle.enabled,
+                        ) {
+                            if (nowBarStyle.enabled)
+                                chipState.eventCount
                             else chipState.allEvents.count { it !is IslandEvent.Media }
                         }
-                        KeyguardChipBody(
-                            event = event,
-                            accent = accent,
-                            contentColor = contentColor,
-                            progress = progress,
-                            eventCount = keyguardEventCount,
-                            viewModel = viewModel,
-                            batteryString = batteryString,
-                            aospChipExpandable = expandable,
-                        )
+                        CompositionLocalProvider(
+                            LocalNowBarMarqueeEnabled provides
+                                (!nowBarStyle.enabled || nowBarStyle.scrollText),
+                            LocalNowBarTextMaxWidth provides
+                                if (nowBarStyle.enabled)
+                                    (nowBarStyle.width - 56).coerceAtLeast(40).dp
+                                else null,
+                            LocalNowBarTextFontSp provides
+                                if (nowBarStyle.enabled)
+                                    (nowBarStyle.height * 0.26f).coerceIn(
+                                        11f, nowBarStyle.textSize.toFloat().coerceAtLeast(11f)
+                                    )
+                                else null,
+                        ) {
+                            KeyguardChipBody(
+                                event = event,
+                                accent = accent,
+                                contentColor = contentColor,
+                                progress = progress,
+                                eventCount = keyguardEventCount,
+                                selectedEventIndex = chipState.pinnedIndex,
+                                viewModel = viewModel,
+                                nowBarStyle = nowBarStyle.takeIf { it.enabled },
+                                isDozing = isDozing,
+                                batteryString = batteryString,
+                                aospChipExpandable = expandable,
+                            )
+                        }
                     }
                 }
-            } else if (isKeyguardDynamicBarEnabled) {
+            } else if (isKeyguardDynamicBarEnabled && !nowBarStyle.enabled) {
                 KeyguardBatteryChip(
                     batteryInfo,
                     keyguardBatteryChipMode,
@@ -371,6 +469,7 @@ fun AxDynamicBarKeyguardChip(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun KeyguardChipBody(
     event: IslandEvent,
@@ -378,13 +477,42 @@ private fun KeyguardChipBody(
     contentColor: Color,
     progress: Float?,
     eventCount: Int,
+    selectedEventIndex: Int,
     viewModel: AxDynamicBarChipViewModel,
+    nowBarStyle: AxLockscreenNowBarSettings? = null,
+    isDozing: Boolean = false,
     batteryString: String = "",
     aospChipExpandable: SystemUiExpandable,
 ) {
     val context = LocalContext.current
+    val popupAnchor = LocalView.current
     val motionScheme = MaterialTheme.motionScheme
     var toggleCount by remember { mutableIntStateOf(0) }
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val onPillClick: () -> Unit = {
+        when (event) {
+            is IslandEvent.Notification ->
+                viewModel.launchNotificationFromKeyguard(event)
+            is IslandEvent.AospChip ->
+                viewModel.handleAospChipTap(event, aospChipExpandable)
+            is IslandEvent.KeyguardIndication, is IslandEvent.AppSwitch -> Unit
+            else -> {
+                val wasExpanded = viewModel.keyguardExpansion.isExpanded.value
+                viewModel.keyguardExpansion.toggle()
+                if (!wasExpanded) toggleCount++
+            }
+        }
+    }
+    val onPillLongClick: () -> Unit = {
+        if (nowBarStyle != null) {
+            val menu = android.widget.PopupMenu(context, popupAnchor)
+            menu.menu.add("Hide until activity ends").setOnMenuItemClickListener {
+                viewModel.interactor.hideNowBarEvent(event)
+                true
+            }
+            menu.show()
+        }
+    }
     val isMedia = event is IslandEvent.Media
     val parts = rememberChargingParts(batteryString)
     val isMultiLineCharging = event is IslandEvent.Charging && parts.size >= 2
@@ -394,32 +522,115 @@ private fun KeyguardChipBody(
         else -> ChipHeight
     }
     val dynamicMinWidth = if (isMedia) MusicChipMinWidth else 48.dp
+    val styledHeight = if (nowBarStyle != null) nowBarStyle.height.dp else dynamicHeight
+    // Width is a continuous dp setting for Now Bar only. Keep the original
+    // dynamic music-pill measurements when Now Bar is not selected.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val availableWidthDp = (screenWidthDp - 24).coerceAtLeast(120)
+    val styledWidth = nowBarStyle?.width?.coerceIn(120, availableWidthDp)?.dp
+    val chipWidthModifier = if (styledWidth != null) Modifier.width(styledWidth)
+        else Modifier.widthIn(min = dynamicMinWidth, max = 180.dp)
+    // The real pill width limits text, while fixed icons and optional buttons
+    // retain their space. Dynamic Bar continues using its original sizing.
+    val nowBarActionSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.44f).coerceIn(20f, 32f).dp else ActionSize
+    val nowBarActionIconSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.26f).coerceIn(13f, 20f).dp else ActionIconSize
+    // The lockscreen Now Bar uses larger system-event icons than Dynamic Bar.
+    // Scale with the selected bar height and preserve the existing look elsewhere.
+    val nowBarStatusIconSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.32f).coerceIn(16f, 20f).dp else SizeBadge
+    val actionCount = if (nowBarStyle != null && !isMedia)
+        actionsFor(event, context).size else 0
+    val nowBarTextMaxWidth = if (styledWidth != null) {
+        val actionsWidthDp = actionCount *
+            (nowBarActionSize.value + SpaceXs.value + SpaceXxs.value)
+        (styledWidth.value - 48f - actionsWidthDp).coerceAtLeast(32f).dp
+    } else 110.dp
+    val styledShape = if (nowBarStyle != null)
+        RoundedCornerShape((nowBarStyle.height * nowBarStyle.corners / 200f).dp)
+        else ChipShape
+    val styledColor = if (isDozing && nowBarStyle != null) Color.Black
+        else when (nowBarStyle?.color) {
+        0 -> (event as? IslandEvent.Media)?.mediaColor?.takeIf { it != 0 }?.let(::Color) ?: accent
+        1 -> Color(context.getColor(android.R.color.system_accent1_700))
+        2 -> Color(0xFF18191B)
+        else -> accent
+    }
+    val styledContentColor = when {
+        isDozing && nowBarStyle != null -> Color.White
+        nowBarStyle == null -> contentColor
+        nowBarStyle.color == 2 -> Color.White
+        nowBarStyle.material == 0 && styledColor.luminance() > 0.4f -> Color.Black
+        nowBarStyle.material == 0 -> Color.White
+        else -> contentColor
+    }
+    val styledStroke = when (nowBarStyle?.outline) {
+        0 -> Color.Transparent
+        2 -> accent
+        null -> chipStrokeColor()
+        else -> styledContentColor.copy(alpha = 0.3f)
+    }
+    val styledStrokeWidth = if (nowBarStyle?.outline == 0) 0.dp
+        else if (nowBarStyle != null) 1.dp else 0.3.dp
+    val styledShadow = if (isDozing) 0.dp else when (nowBarStyle?.shadow) {
+        1 -> 6.dp
+        2 -> 12.dp
+        else -> 0.dp
+    }
+    val styledArtworkSize = if (nowBarStyle != null)
+        (nowBarStyle.height - 16).coerceIn(30, 78).dp else MusicActionSize
+    val mediaButtonSize = if (nowBarStyle != null)
+        (nowBarStyle.height - 24).coerceIn(24, 48).dp else MusicPlayPauseSize
+    val mediaButtonIconSize = if (nowBarStyle != null)
+        (mediaButtonSize.value - 9f).coerceIn(14f, 30f).dp
+        else MusicPlayPauseIconSize
+    val skipButtonIconSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.42f).coerceIn(18f, 28f).dp else 24.dp
+    val sportsBadgeSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.40f).coerceIn(18f, 32f).dp else ChipIconSize
+    val styledArtShape = when (nowBarStyle?.art) {
+        1 -> RoundedCornerShape(10.dp)
+        2 -> RoundedCornerShape(3.dp)
+        else -> CircleShape
+    }
 
+    // The host ConstraintLayout positions the entire collapsed Now Bar for
+    // Raise. Offsetting only this child could draw outside the ComposeView and
+    // clip its background, artwork and touch target.
     Box(contentAlignment = Alignment.Center) {
-        Box(
-            modifier = Modifier
-                .matchParentSize(),
-        ) {
-            AndroidView(
-                factory = { ctx -> MusicPillBlurHost(ctx) },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(ChipShape),
+        if (!isDozing && (nowBarStyle == null || nowBarStyle.material == 1)) {
+            Box(modifier = Modifier.matchParentSize()) {
+                AndroidView(
+                    factory = { ctx -> MusicPillBlurHost(ctx) },
+                    modifier = Modifier.fillMaxSize().clip(styledShape),
+                )
+            }
+        }
+        if (nowBarStyle?.more == 2 && eventCount > 1 && !isDozing) {
+            Box(
+                modifier = Modifier.matchParentSize()
+                    .offset(y = (-5).dp)
+                    .clip(styledShape)
+                    .background(styledColor.copy(alpha = 0.45f)),
             )
         }
         Row(
             modifier = Modifier
-                .height(dynamicHeight)
-                .widthIn(min = dynamicMinWidth, max = 180.dp)
-                .border(BorderStroke(0.3.dp, chipStrokeColor()), ChipShape)
-                .clip(ChipShape)
+                .height(styledHeight)
+                .then(chipWidthModifier)
+                .shadow(styledShadow, styledShape)
+                .border(BorderStroke(styledStrokeWidth, styledStroke), styledShape)
+                .clip(styledShape)
                 .squishAnimation(toggleCount)
-                .background(Color.Transparent)
+                .background(if (nowBarStyle == null) Color.Transparent else
+                    styledColor.copy(alpha = nowBarStyle.opacity / 100f *
+                        (if (nowBarStyle.material == 1) 0.24f else 1f)))
                 .animateContentSize(motionScheme.defaultSpatialSpec())
                 .then(
                     if (progress != null) {
-                        val trackColor = lerp(accent, contentColor, 0.2f)
-                        val fillColor = lerp(accent, contentColor, 0.6f)
+                        val trackColor = lerp(accent, styledContentColor, 0.2f)
+                        val fillColor = lerp(accent, styledContentColor, 0.6f)
                         Modifier.drawWithContent {
                             drawContent()
                             val barH = SizeStrokeWidth.toPx()
@@ -429,30 +640,85 @@ private fun KeyguardChipBody(
                         }
                     } else Modifier
                 )
-                .clickable {
-                    when (event) {
-                        is IslandEvent.Notification ->
-                            viewModel.launchNotificationFromKeyguard(event)
-
-                        is IslandEvent.AospChip -> {
-                            viewModel.handleAospChipTap(event, aospChipExpandable)
-                        }
-
-                        is IslandEvent.KeyguardIndication,
-                        is IslandEvent.AppSwitch -> { }
-                        else -> {
-                            val wasExpanded = viewModel.keyguardExpansion.isExpanded.value
-                            viewModel.keyguardExpansion.toggle()
-                            if (!wasExpanded) toggleCount++
-                        }
-                    }
-                }
+                .then(
+                    if (nowBarStyle != null) Modifier.combinedClickable(
+                        onClick = onPillClick,
+                        onLongClick = onPillLongClick,
+                    ) else Modifier.clickable(onClick = onPillClick)
+                )
                 .padding(start = if (isMedia) SpaceMd else SpaceSm, end = SpaceMd),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (nowBarStyle != null) Arrangement.Center else Arrangement.Start,
         ) {
-            if (event is IslandEvent.Media) {
+            if (nowBarStyle != null && event is IslandEvent.Charging) {
+                // Use the exact width of Android's native charging text.
+                // Center the whole icon + text group if it fits; otherwise the
+                // bolt remains at the left inset and text gets all remaining space.
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
+                    val iconGap = SpaceXs
+                    val textWidth = (maxWidth - iconSize - iconGap).coerceAtLeast(32.dp)
+                    val chargingLines = rememberChargingParts(batteryString)
+                    val title = chargingLines.firstOrNull() ?: "${event.level}%"
+                    val metrics = chargingLines.drop(1).joinToString(" · ")
+                    val textMeasurer = rememberTextMeasurer()
+                    val density = LocalDensity.current
+                    // PillPrimary reads Compose state. Resolve it in the
+                    // composable scope, not inside remember's non-composable
+                    // calculation lambda.
+                    val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
+                    val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
+                    val baseTextStyle = PillPrimary
+                    val titleStyle = baseTextStyle.copy(fontSize = titleSize.sp)
+                    val detailStyle = baseTextStyle.copy(fontSize = detailSize.sp)
+                    val requiredTextWidthPx = remember(
+                        title, metrics, textMeasurer, titleStyle, detailStyle,
+                    ) {
+                        maxOf(
+                            textMeasurer.measure(
+                                text = title,
+                                style = titleStyle,
+                                maxLines = 1,
+                            ).size.width,
+                            if (metrics.isNotEmpty()) textMeasurer.measure(
+                                text = metrics,
+                                style = detailStyle,
+                                maxLines = 1,
+                            ).size.width else 0,
+                        )
+                    }
+                    val requiredTextWidth = with(density) {
+                        (requiredTextWidthPx + 4).toDp()
+                    }
+                    val groupWidth = minOf(maxWidth,
+                        iconSize + iconGap + requiredTextWidth.coerceAtLeast(32.dp))
+                    Row(
+                        modifier = Modifier.width(groupWidth),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Start,
+                    ) {
+                        AnimatedChargingBoltIcon(styledContentColor, iconSize)
+                        Spacer(Modifier.width(iconGap))
+                        NowBarResponsiveChargingText(
+                            event = event,
+                            batteryString = batteryString,
+                            color = styledContentColor,
+                            heightDp = nowBarStyle.height,
+                            availableWidth = textWidth,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            } else if (event is IslandEvent.Media) {
+                if (nowBarStyle?.art != 3) {
+                val artworkFrame = if (nowBarStyle != null)
+                    rememberKeyguardMediaArtwork(event)
+                else KeyguardMediaArtworkFrame("classic", event.albumArt)
                 AnimatedContent(
-                    targetState = event.albumArt,
+                    targetState = artworkFrame,
                     transitionSpec = {
                         (fadeIn(motionScheme.defaultEffectsSpec()) +
                             scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
@@ -460,23 +726,25 @@ private fun KeyguardChipBody(
                                 scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
                             SizeTransform(clip = false)
                     },
-                    contentKey = { it?.hashCode() ?: 0 },
+                    contentKey = { "${it.trackId}|${it.drawable?.hashCode() ?: 0}" },
                     label = "kg_media_icon",
-                ) { art ->
+                ) { frame ->
+                    val art = frame.drawable
                     if (art != null) {
                         Image(
-                            bitmap = art.toScaledBitmap(MusicActionSize),
+                            bitmap = art.toScaledBitmap(styledArtworkSize),
                             contentDescription = null,
                             modifier = Modifier
-                                .size(MusicActionSize)
-                                .clip(CircleShape),
+                                .size(styledArtworkSize)
+                                .clip(styledArtShape),
                             contentScale = ContentScale.Crop,
                         )
                     } else {
-                        PillEventIcon(event, tint = contentColor, animated = false)
+                        PillEventIcon(event, tint = styledContentColor, animated = false)
                     }
                 }
                 Spacer(Modifier.width(SpaceXs))
+                }
                 AnimatedContent(
                     targetState = event,
                     transitionSpec = {
@@ -493,22 +761,33 @@ private fun KeyguardChipBody(
                     Column(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.widthIn(max = 110.dp).fillMaxWidth(),
+                        modifier = Modifier.widthIn(max = nowBarTextMaxWidth).fillMaxWidth(),
                     ) {
                         Text(
-                            ev.track.ifEmpty { stringResource(R.string.ax_dynamic_bar_music) },
-                            style = PillPrimary.copy(fontSize = 13.sp),
-                            color = contentColor,
+                            if (nowBarStyle?.text == 0)
+                                listOf(ev.track, ev.artist).filter { it.isNotBlank() }.joinToString(" · ")
+                            else ev.track.ifEmpty { stringResource(R.string.ax_dynamic_bar_music) },
+                            style = PillPrimary.copy(
+                                fontSize = (LocalNowBarTextFontSp.current
+                                    ?: (nowBarStyle?.textSize ?: 13).toFloat()).sp,
+                            ),
+                            color = styledContentColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().basicMarquee(iterations = 1),
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                else Modifier
+                            ),
                         )
-                        if (ev.artist.isNotBlank()) {
+                        if (ev.artist.isNotBlank() &&
+                            (nowBarStyle == null || nowBarStyle.text == 1)) {
                             Text(
                                 ev.artist,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
-                                color = contentColor.copy(alpha = AlphaSecondary),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = ((LocalNowBarTextFontSp.current
+                                        ?: (nowBarStyle?.textSize ?: 13).toFloat()) - 1f).sp),
+                                color = styledContentColor.copy(alpha = AlphaSecondary),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 textAlign = TextAlign.Center,
@@ -518,36 +797,74 @@ private fun KeyguardChipBody(
                     }
                 }
                 Spacer(Modifier.width(SpaceXs))
+                if (nowBarStyle != null && nowBarStyle.buttons == 0) {
+                    Icon(
+                        Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        tint = styledContentColor,
+                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipPrev() },
+                    )
+                }
+                if (nowBarStyle == null || nowBarStyle.buttons != 2) {
                 Surface(
                     onClick = { viewModel.togglePlayPause() },
-                    modifier = Modifier.size(MusicPlayPauseSize),
+                    modifier = Modifier.size(mediaButtonSize),
                     shape = CircleShape,
-                    color = lerp(accent, contentColor, AlphaSubtle).copy(alpha = 0.4f),
+                    color = lerp(accent, styledContentColor, AlphaSubtle).copy(alpha = 0.4f),
                 ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(MusicPlayPauseSize)) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(mediaButtonSize)) {
                         Icon(
                             if (event.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             contentDescription = stringResource(
                                 if (event.isPlaying) R.string.ax_dynamic_bar_pause
                                 else R.string.ax_dynamic_bar_play,
                             ),
-                            tint = contentColor,
-                            modifier = Modifier.size(MusicPlayPauseIconSize),
+                            tint = styledContentColor,
+                            modifier = Modifier.size(mediaButtonIconSize),
                         )
                     }
                 }
+                }
+                if (nowBarStyle != null && nowBarStyle.buttons == 0) {
+                    Icon(
+                        Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        tint = styledContentColor,
+                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipNext() },
+                    )
+                }
+                if (nowBarStyle?.wave == true && event.isPlaying && !isDozing) {
+                    val waveTransition = rememberInfiniteTransition(label = "nowbar_music_wave")
+                    val waveAmp by waveTransition.animateFloat(
+                        initialValue = 0.4f, targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
+                        label = "nowbar_wave_amplitude",
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        for (i in 0..2) {
+                            Spacer(
+                                Modifier.width(3.dp).height(
+                                    (8f + (i + 1) * 5f * waveAmp).dp)
+                                    .padding(horizontal = 0.5.dp)
+                                    .background(styledContentColor, RoundedCornerShape(2.dp))
+                            )
+                        }
+                    }
+                }
             } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
-                SportsChipTeamBadge(event.team1Name, event.team1Icon, contentColor)
+                SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
                 Spacer(Modifier.width(SpaceXs))
                 Text(
                     if (event.score1.isNotEmpty()) "${event.score1} - ${event.score2}"
                         else stringResource(R.string.ax_dynamic_bar_sports_vs),
-                    style = PillPrimary,
-                    color = contentColor,
+                    style = if (nowBarStyle != null)
+                        PillPrimary.copy(fontSize = (LocalNowBarTextFontSp.current ?: 13f).sp)
+                        else PillPrimary,
+                    color = styledContentColor,
                     maxLines = 1,
                 )
                 Spacer(Modifier.width(SpaceXs))
-                SportsChipTeamBadge(event.team2Name, event.team2Icon, contentColor)
+                SportsChipTeamBadge(event.team2Name, event.team2Icon, styledContentColor, sportsBadgeSize)
             } else {
                 AnimatedContent(
                     targetState = event,
@@ -560,8 +877,24 @@ private fun KeyguardChipBody(
                     },
                     contentKey = { iconKeyFor(it) },
                     label = "kg_chip_icon",
+                    modifier = if (nowBarStyle != null) Modifier.offset(y = (-1).dp)
+                        else Modifier,
                 ) { ev ->
-                    PillEventIcon(ev, tint = contentColor, animated = false)
+                    if (nowBarStyle != null) {
+                        // Use a consistent icon slot for hotspot, Bluetooth, and
+                        // the other non-media activities; keep glyphs optically centered.
+                        Box(
+                            modifier = Modifier.size(nowBarStatusIconSize + 2.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            PillEventIcon(
+                                ev, tint = styledContentColor, animated = false,
+                                staticIconSize = nowBarStatusIconSize,
+                            )
+                        }
+                    } else {
+                        PillEventIcon(ev, tint = styledContentColor, animated = false)
+                    }
                 }
                 Spacer(Modifier.width(SpaceXs))
                 AnimatedContent(
@@ -575,31 +908,44 @@ private fun KeyguardChipBody(
                     },
                     contentKey = { textKeyFor(it) },
                     label = "kg_chip_text",
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f, fill = false).then(
+                        if (nowBarStyle != null) Modifier.offset(y = (-1).dp) else Modifier
+                    ),
                 ) { ev ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        KeyguardPrimaryText(ev, contentColor, Modifier.weight(1f, fill = false).widthIn(max = 110.dp), batteryString)
+                        KeyguardPrimaryText(
+                            ev, styledContentColor,
+                            Modifier.weight(1f, fill = false).widthIn(max = nowBarTextMaxWidth),
+                            batteryString,
+                        )
                         val secondary = secondaryTextFor(ev)
-                        if (secondary != null) {
-                            Text(
-                                " · ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = contentColor.copy(alpha = AlphaTertiary),
-                            )
-                            Text(
-                                secondary,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = contentColor.copy(alpha = AlphaSecondary),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 60.dp).basicMarquee(iterations = 1),
-                            )
+                            if (secondary != null) {
+                                Text(
+                                    " · ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = styledContentColor.copy(alpha = AlphaTertiary),
+                                )
+                                Text(
+                                    secondary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = styledContentColor.copy(alpha = AlphaSecondary),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(
+                                        max = if (nowBarStyle != null)
+                                            (nowBarTextMaxWidth * 0.45f).coerceAtLeast(32.dp)
+                                        else 60.dp,
+                                    ).then(
+                                        if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                        else Modifier
+                                    ),
+                                )
+                            }
                         }
-                    }
                 }
             }
 
-            if (event !is IslandEvent.Media) {
+            if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
                 val actionsCtx = LocalContext.current
                 val actions = actionsFor(event, actionsCtx)
                 if (actions.isNotEmpty()) {
@@ -608,34 +954,104 @@ private fun KeyguardChipBody(
                         Spacer(Modifier.width(SpaceXxs))
                         ActionButton(
                             icon = action.icon,
-                            color = contentColor,
+                            color = styledContentColor,
                             bgColor = accent.copy(alpha = 0.5f),
                             onClick = { action.perform(viewModel, event, context) },
-                            size = ActionSize,
-                            iconSize = ActionIconSize,
+                            size = nowBarActionSize,
+                            iconSize = nowBarActionIconSize,
                         )
                     }
                 }
             }
 
-            if (eventCount > 1 && event !is IslandEvent.Media) {
+            // The original Dynamic Bar retains its compact right-side count badge.
+            // Now Bar's dots are overlaid at the bottom, without consuming width.
+            if (nowBarStyle == null && eventCount > 1 && event !is IslandEvent.Media) {
                 Spacer(Modifier.width(SpaceXs))
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .height(CountBadgeHeight)
                         .widthIn(min = CountBadgeHeight)
-                        .background(lerp(accent, contentColor, AlphaDisabled), ShapeChip)
+                        .background(lerp(accent, styledContentColor, AlphaDisabled), ShapeChip)
                         .padding(horizontal = SpaceXxs),
                 ) {
                     Text(
                         "$eventCount",
                         style = TsBadge,
-                        color = contentColor,
+                        color = styledContentColor,
                         maxLines = 1,
                     )
                 }
             }
+        }
+        if (nowBarStyle?.more == 1 && eventCount > 1 && !isDozing) {
+            // Center the activity indicators just above the lower pill outline,
+            // inside the collapsed Now Bar. This is not a right-side badge.
+            // Keep a sliding window for large activity counts so the active dot
+            // remains visible even when the user swipes beyond the first seven.
+            val visibleDots = eventCount.coerceAtMost(7)
+            val windowStart = (selectedEventIndex - visibleDots / 2)
+                .coerceIn(0, eventCount - visibleDots)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(visibleDots) { dot ->
+                    val selected = windowStart + dot == selectedEventIndex
+                    Box(
+                        modifier = Modifier
+                            .size(if (selected) 5.dp else 4.dp)
+                            .background(
+                                styledContentColor.copy(alpha = if (selected) 0.95f else 0.35f),
+                                CircleShape,
+                            ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Now Bar's independent idle battery display, used ONLY when its own "Always"
+ * mode is selected and there are no other activities. Do not apply the
+ * configurable Now Bar width/height to this small 36dp battery-only pill.
+ * The original Dynamic Bar battery implementation below stays unchanged.
+ */
+@Composable
+private fun NowBarIdleBatteryChip(info: KeyguardBatteryInfo) {
+    val accent = if (info.isPowerSave) BatteryPowerSaveColor else BatteryNeutralColor
+    val contentColor = chipContentColorOn(accent)
+    Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.matchParentSize().clip(ChipShape)) {
+            AndroidView(
+                factory = { ctx -> MusicPillBlurHost(ctx) },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .height(ChipHeight)
+                .widthIn(min = 72.dp)
+                .border(BorderStroke(0.3.dp, chipStrokeColor()), ChipShape)
+                .clip(ChipShape)
+                .background(Color.Transparent)
+                .padding(horizontal = SpaceMd),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            AnimatedBatteryFillIcon(info.level, contentColor, BatteryIconSize)
+            Spacer(Modifier.width(SpaceXs))
+            Text(
+                text = "${info.level}%",
+                style = PillPrimary,
+                color = contentColor,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -877,6 +1293,70 @@ private fun AnimatedBatteryFillIcon(level: Int, color: Color, iconSize: Dp = Bat
     }
 }
 
+/**
+ * The collapsed Now Bar's charging activity uses the entire measured text area.
+ * Its width comes from the live Now Bar slider rather than Dynamic Bar's 110dp
+ * text cap, and its typography/line count also responds to the chosen height.
+ * No change is made to the original Dynamic Bar battery fallback or expanded UI.
+ */
+@Composable
+private fun NowBarResponsiveChargingText(
+    event: IslandEvent.Charging,
+    batteryString: String,
+    color: Color,
+    heightDp: Int,
+    availableWidth: Dp,
+    modifier: Modifier = Modifier,
+) {
+    // Display the same unmodified charging indication as the normal lockscreen:
+    // first line: battery percentage and Android's charging-speed phrase;
+    // second line (if enabled): real current, wattage, voltage, temperature.
+    val lines = rememberChargingParts(batteryString)
+    val mainText = lines.firstOrNull() ?: "${event.level}%"
+    val details = lines.drop(1).joinToString(" · ")
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val freeWidth = availableWidth.value.coerceAtLeast(24f)
+
+    // Change appearance only, never the underlying text or measurements.
+    val titleHeightSp = (heightDp * 0.24f).coerceIn(10f, 14f)
+    val titleWidthSp = freeWidth / (mainText.length.coerceAtLeast(1) * 0.53f)
+    val titleFontSp = minOf(titleHeightSp, titleWidthSp.coerceAtLeast(9f))
+    val detailHeightSp = (heightDp * 0.19f).coerceIn(9f, 12f)
+    val detailWidthSp = freeWidth / (details.length.coerceAtLeast(1) * 0.52f)
+    val detailFontSp = minOf(detailHeightSp, detailWidthSp.coerceAtLeast(9f))
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = mainText,
+            style = PillPrimary.copy(fontSize = titleFontSp.sp),
+            color = color,
+            maxLines = 1,
+            overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth().then(
+                if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+            ),
+        )
+        if (details.isNotEmpty()) {
+            Text(
+                text = details,
+                style = PillPrimary.copy(fontSize = detailFontSp.sp),
+                color = color.copy(alpha = AlphaSecondary),
+                maxLines = 1,
+                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                textAlign = TextAlign.Start,
+                modifier = Modifier.fillMaxWidth().then(
+                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+                ),
+            )
+        }
+    }
+}
+
 @Composable
 private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modifier, batteryString: String = "") {
     when (event) {
@@ -917,12 +1397,18 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
                 MarqueeText(if (parts.isNotEmpty()) parts[0] else "${event.level}%", color, modifier)
             }
         }
-        is IslandEvent.Bluetooth -> MarqueeText(event.deviceName.take(12), color, modifier)
+        is IslandEvent.Bluetooth -> MarqueeText(
+            if (LocalNowBarTextMaxWidth.current != null) event.deviceName
+            else event.deviceName.take(12),
+            color, modifier,
+            fontSizeAdjustSp = if (LocalNowBarTextFontSp.current != null) 1f else 0f,
+        )
         is IslandEvent.Hotspot -> {
             val hotspotLabel = stringResource(R.string.ax_dynamic_bar_hotspot)
             MarqueeText(
-                if (event.numDevices > 0) "$hotspotLabel · ${event.numDevices}" else hotspotLabel,
+                "$hotspotLabel · ${event.numDevices}",
                 color, modifier,
+                fontSizeAdjustSp = if (LocalNowBarTextFontSp.current != null) 1f else 0f,
             )
         }
         is IslandEvent.Alarm -> MarqueeText(event.label.ifEmpty { stringResource(R.string.ax_dynamic_bar_alarm) }, color, modifier)
@@ -968,7 +1454,7 @@ private fun AospKeyguardChipText(
         is OngoingActivityChipModel.Content.Countdown -> Text(
             formatCountdownLong(content.secondsUntilStarted * 1000L),
             color = color,
-            style = PillMono,
+            style = adaptiveNowBarMonoStyle(),
             modifier = modifier,
         )
         is OngoingActivityChipModel.Content.IconOnly -> Unit
@@ -990,7 +1476,7 @@ private fun AospKeyguardTimerText(
             delay(1000L - abs(content.startTimeMs - content.timeSource.getCurrentTime()) % 1000L)
         }
     }
-    Text(formatCountdownLong(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    Text(formatCountdownLong(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
 }
 
 private fun aospTimerElapsedMs(content: OngoingActivityChipModel.Content.Timer): Long {
@@ -1093,7 +1579,7 @@ private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideC
             }
         }
         val color = overrideColor ?: GreenAccent
-        Text(formatElapsedTime(elapsedMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatElapsedTime(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         MarqueeText(
             stringResource(if (isActive) R.string.ax_dynamic_bar_call else R.string.ax_dynamic_bar_incoming_call),
@@ -1104,17 +1590,22 @@ private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideC
 }
 
 @Composable
-private fun SportsChipTeamBadge(name: String, icon: Drawable?, contentColor: Color) {
+private fun SportsChipTeamBadge(
+    name: String,
+    icon: Drawable?,
+    contentColor: Color,
+    iconSize: Dp = ChipIconSize,
+) {
     if (icon != null) {
         Image(
-            bitmap = icon.toScaledBitmap(ChipIconSize),
+            bitmap = icon.toScaledBitmap(iconSize),
             contentDescription = name,
-            modifier = Modifier.size(ChipIconSize).clip(CircleShape),
+            modifier = Modifier.size(iconSize).clip(CircleShape),
             contentScale = ContentScale.Crop,
         )
     } else {
         Box(
-            modifier = Modifier.size(ChipIconSize).clip(CircleShape)
+            modifier = Modifier.size(iconSize).clip(CircleShape)
                 .background(contentColor.copy(alpha = AlphaIconBg)),
             contentAlignment = Alignment.Center,
         ) {
@@ -1225,14 +1716,33 @@ private fun chipStrokeColor(): Color {
 }
 
 @Composable
-private fun MarqueeText(text: String, color: Color, modifier: Modifier) {
+private fun adaptiveNowBarMonoStyle(): TextStyle {
+    val customFontSp = LocalNowBarTextFontSp.current
+    return if (customFontSp != null) PillMono.copy(fontSize = customFontSp.sp) else PillMono
+}
+
+@Composable
+private fun MarqueeText(
+    text: String,
+    color: Color,
+    modifier: Modifier,
+    fontSizeAdjustSp: Float = 0f,
+) {
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val customMaxWidth = LocalNowBarTextMaxWidth.current
+    val customFontSp = LocalNowBarTextFontSp.current
     Text(
         text,
         color = color,
-        style = PillPrimary,
+        style = if (customFontSp != null)
+            PillPrimary.copy(fontSize = (customFontSp + fontSizeAdjustSp).sp)
+            else PillPrimary,
         maxLines = 1,
-        overflow = TextOverflow.Clip,
-        modifier = modifier.widthIn(max = 120.dp).basicMarquee(iterations = 1),
+        overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+        textAlign = if (customMaxWidth != null) TextAlign.Center else TextAlign.Unspecified,
+        modifier = modifier.widthIn(max = customMaxWidth ?: 120.dp).then(
+            if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+        ),
     )
 }
 
@@ -1255,13 +1765,13 @@ private fun ElapsedTimeText(
                 .coerceAtLeast(0L)
         }
     }
-    Text(formatCountdownLong(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    Text(formatCountdownLong(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
 }
 
 @Composable
 private fun CountdownText(event: IslandEvent.Timer, color: Color, modifier: Modifier) {
     if (event.isPaused) {
-        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = PillMono, modifier = modifier)
+        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         var remainingMs by remember(event.endTimeMs) {
             mutableLongStateOf((event.endTimeMs - System.currentTimeMillis()).coerceAtLeast(0L))
@@ -1272,14 +1782,14 @@ private fun CountdownText(event: IslandEvent.Timer, color: Color, modifier: Modi
                 remainingMs = (event.endTimeMs - System.currentTimeMillis()).coerceAtLeast(0L)
             }
         }
-        Text(formatCountdownLong(remainingMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatCountdownLong(remainingMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     }
 }
 
 @Composable
 private fun StopwatchTimeText(event: IslandEvent.Stopwatch, color: Color, modifier: Modifier) {
     if (!event.isRunning) {
-        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = PillMono, modifier = modifier)
+        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         var elapsedMs by remember(event.startTimeMs) {
             mutableLongStateOf((System.currentTimeMillis() - event.startTimeMs).coerceAtLeast(0L))
@@ -1290,7 +1800,7 @@ private fun StopwatchTimeText(event: IslandEvent.Stopwatch, color: Color, modifi
                 elapsedMs = (System.currentTimeMillis() - event.startTimeMs).coerceAtLeast(0L)
             }
         }
-        Text(formatStopwatch(elapsedMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatStopwatch(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     }
 }
 

@@ -1,5 +1,11 @@
 package com.android.systemui.axdynamicbar.ui
 
+import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import com.android.systemui.animation.Expandable
 import com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor
 import com.android.systemui.islandevents.model.IslandEvent
@@ -52,6 +58,7 @@ class AxDynamicBarChipViewModel
 @Inject
 constructor(
     @Application private val applicationScope: CoroutineScope,
+    @Application private val applicationContext: Context,
     val interactor: AxDynamicBarInteractor,
     batteryInteractor: BatteryInteractor,
     private val batteryController: BatteryController,
@@ -93,7 +100,8 @@ constructor(
     val isEnabled: StateFlow<Boolean> = interactor.settings.isEnabled
     val isKeyguardEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardEnabled
     val keyguardBatteryChipMode: StateFlow<Int> = interactor.settings.keyguardBatteryChipMode
-    val isKeyguardMusicPillEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardMusicPillEnabled
+    val nowBarAppearance: StateFlow<com.android.systemui.axdynamicbar.domain.AxLockscreenNowBarSettings> =
+        interactor.settings.nowBarAppearance
     val isMediaEventTypeEnabled: StateFlow<Boolean> =
         interactor.settings.disabledEventTypes
             .map { "media" !in it }
@@ -155,11 +163,28 @@ constructor(
         awaitClose { keyguardIndicationController.removeIndicationListener(listener) }
     }
 
+    private val batteryInfoSettingTick: kotlinx.coroutines.flow.Flow<Unit> = callbackFlow {
+        val resolver = applicationContext.contentResolver
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                trySend(Unit)
+            }
+        }
+        resolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.LOCKSCREEN_BATTERY_INFO),
+            false,
+            observer,
+            UserHandle.USER_ALL,
+        )
+        awaitClose { resolver.unregisterContentObserver(observer) }
+    }
+
     val batteryString: StateFlow<String> =
         combine(
             keyguardBatteryInfo,
             batteryIndicationTick.onStart { emit(Unit) },
-        ) { info, _ -> info }
+            batteryInfoSettingTick.onStart { emit(Unit) },
+        ) { info, _, _ -> info }
             .map {
                 if (it.isCharging) {
                     formatChargingString(keyguardIndicationController.powerChargingString)
@@ -170,6 +195,18 @@ constructor(
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Lazily, "")
 
+    // Driven by the text view's changes, not by polling or an indication queue.
+    // This is separate from the Now Bar activity visibility flow, so showing a
+    // hint cannot accidentally suppress the hint itself.
+    val hasVisibleKeyguardText: StateFlow<Boolean> = callbackFlow<Boolean> {
+        val listener = KeyguardIndicationController.LockScreenTextListener { hasText ->
+            trySend(hasText)
+        }
+        keyguardIndicationController.addLockScreenTextListener(listener)
+        awaitClose { keyguardIndicationController.removeLockScreenTextListener(listener) }
+    }.distinctUntilChanged()
+        .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
     val isOnKeyguard: StateFlow<Boolean> = interactor.isOnKeyguard
 
     val shouldSuppressKeyguardIndication: StateFlow<Boolean> =
@@ -178,18 +215,45 @@ constructor(
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 
+    /** Actual Now Bar activity, excluding its own compact idle-battery display. */
+    val isNowBarActivityVisible: StateFlow<Boolean> =
+        combine(
+            isOnKeyguard, nowBarAppearance, interactor.isDozing,
+            chipState, keyguardBatteryInfo,
+        ) { onKeyguard, nowBar, dozing, state, battery ->
+            // After the battery stops charging, a stale charging event must
+            // not suppress normal lockscreen text during the event teardown.
+            onKeyguard && nowBar.enabled && !dozing &&
+                state?.allEvents?.any {
+                    it !is IslandEvent.Charging || battery.isCharging
+                } == true
+        }.distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
     val isKeyguardChipVisible: StateFlow<Boolean> =
         combine(
             isOnKeyguard,
             isEnabled,
             isKeyguardEnabled,
-            isKeyguardMusicPillEnabled,
-            chipState,
-        ) { onKeyguard, enabled, keyguardEnabled, pillEnabled, state ->
-            onKeyguard && (
-                (enabled && keyguardEnabled) ||
-                    (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
-            )
+            combine(nowBarAppearance, interactor.isDozing) { style, dozing ->
+                style to dozing
+            },
+            combine(chipState, keyguardBatteryInfo, hasVisibleKeyguardText) {
+                    state, info, hasText ->
+                Triple(state, info.isCharging, hasText)
+            },
+        ) { onKeyguard, enabled, keyguardEnabled, (nowBar, dozing),
+                (state, charging, hasText) ->
+            onKeyguard && if (nowBar.enabled) {
+                // A live activity has priority. Otherwise the Always-mode
+                // compact battery appears ONLY when no keyguard text is shown.
+                !dozing && (state?.allEvents?.any {
+                    it !is IslandEvent.Charging || charging
+                } == true || (nowBar.charging && nowBar.batteryMode == 1 &&
+                    !charging && !hasText))
+            } else {
+                enabled && keyguardEnabled
+            }
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 

@@ -31,7 +31,6 @@ class AxDynamicBarSettings @Inject constructor(
         const val KEY_ENABLED = "ax_dynamic_bar_enabled"
         const val KEY_EVENTS = "ax_dynamic_bar_events"
         const val KEY_KEYGUARD_ENABLED = "ax_dynamic_bar_keyguard_enabled"
-        const val KEY_KEYGUARD_MUSIC_PILL_ENABLED = "ax_dynamic_bar_keyguard_music_pill"
         const val KEY_KEYGUARD_BATTERY_CHIP_MODE = "ax_dynamic_bar_keyguard_battery_chip_mode"
         const val KEY_CHIP_STYLE = "ax_dynamic_bar_chip_style"
         const val KEY_COMPACT_NOTIFICATIONS = "ax_dynamic_bar_compact_notifications"
@@ -39,14 +38,17 @@ class AxDynamicBarSettings @Inject constructor(
 
     private val contentResolver = context.contentResolver
 
+    // Live, opt-in lock-screen Now Bar styles. This never changes expanded Lunaris panels.
+    private val _nowBarAppearance =
+        MutableStateFlow(AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId))
+    val nowBarAppearance: StateFlow<AxLockscreenNowBarSettings> =
+        _nowBarAppearance.asStateFlow()
+
     private val _isEnabled = MutableStateFlow(false)
     @get:JvmName("getIsEnabled") val isEnabled: StateFlow<Boolean> = _isEnabled.asStateFlow()
 
     private val _isKeyguardEnabled = MutableStateFlow(true)
     val isKeyguardEnabled: StateFlow<Boolean> = _isKeyguardEnabled.asStateFlow()
-
-    private val _isKeyguardMusicPillEnabled = MutableStateFlow(false)
-    val isKeyguardMusicPillEnabled: StateFlow<Boolean> = _isKeyguardMusicPillEnabled.asStateFlow()
 
     private val _keyguardBatteryChipMode = MutableStateFlow(1)
     val keyguardBatteryChipMode: StateFlow<Int> = _keyguardBatteryChipMode.asStateFlow()
@@ -108,12 +110,6 @@ class AxDynamicBarSettings @Inject constructor(
             UserHandle.USER_ALL,
         )
         secureSettings.registerContentObserverForUserSync(
-            KEY_KEYGUARD_MUSIC_PILL_ENABLED,
-            false,
-            settingsObserver,
-            UserHandle.USER_ALL,
-        )
-        secureSettings.registerContentObserverForUserSync(
             KEY_KEYGUARD_BATTERY_CHIP_MODE,
             false,
             settingsObserver,
@@ -131,6 +127,11 @@ class AxDynamicBarSettings @Inject constructor(
             settingsObserver,
             UserHandle.USER_ALL,
         )
+        for (key in AxLockscreenNowBarSettings.KEYS) {
+            contentResolver.registerContentObserver(
+                Settings.System.getUriFor(key), false, settingsObserver, UserHandle.USER_ALL,
+            )
+        }
         secureSettings.registerContentObserverForUserSync(
             KEY_COMPACT_NOTIFICATIONS,
             false,
@@ -154,14 +155,14 @@ class AxDynamicBarSettings @Inject constructor(
     }
 
     private fun refresh() {
+        _nowBarAppearance.value =
+            AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId)
         _isEnabled.value =
             secureSettings.getIntForUser(KEY_ENABLED, 0, UserHandle.USER_CURRENT) == 1
         _isKeyguardEnabled.value =
             secureSettings.getIntForUser(KEY_KEYGUARD_ENABLED, 1, UserHandle.USER_CURRENT) == 1
         _keyguardBatteryChipMode.value =
             secureSettings.getIntForUser(KEY_KEYGUARD_BATTERY_CHIP_MODE, 1, UserHandle.USER_CURRENT)
-        _isKeyguardMusicPillEnabled.value =
-            secureSettings.getIntForUser(KEY_KEYGUARD_MUSIC_PILL_ENABLED, 0, UserHandle.USER_CURRENT) == 1
         _chipStyle.value =
             secureSettings.getIntForUser(KEY_CHIP_STYLE, 0, UserHandle.USER_CURRENT)
         _seekBarStyle.value = MediaSeekBarStyle.read(context, userTracker.userId)
