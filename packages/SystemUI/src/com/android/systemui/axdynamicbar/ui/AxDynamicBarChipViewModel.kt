@@ -100,7 +100,6 @@ constructor(
     val isEnabled: StateFlow<Boolean> = interactor.settings.isEnabled
     val isKeyguardEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardEnabled
     val keyguardBatteryChipMode: StateFlow<Int> = interactor.settings.keyguardBatteryChipMode
-    val isKeyguardMusicPillEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardMusicPillEnabled
     val nowBarAppearance: StateFlow<com.android.systemui.axdynamicbar.domain.AxLockscreenNowBarSettings> =
         interactor.settings.nowBarAppearance
     val isMediaEventTypeEnabled: StateFlow<Boolean> =
@@ -236,14 +235,14 @@ constructor(
             isOnKeyguard,
             isEnabled,
             isKeyguardEnabled,
-            combine(
-                isKeyguardMusicPillEnabled, nowBarAppearance, interactor.isDozing,
-            ) { pill, style, dozing -> Triple(pill, style, dozing) },
+            combine(nowBarAppearance, interactor.isDozing) { style, dozing ->
+                style to dozing
+            },
             combine(chipState, keyguardBatteryInfo, hasVisibleKeyguardText) {
                     state, info, hasText ->
                 Triple(state, info.isCharging, hasText)
             },
-        ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing),
+        ) { onKeyguard, enabled, keyguardEnabled, (nowBar, dozing),
                 (state, charging, hasText) ->
             onKeyguard && if (nowBar.enabled) {
                 // A live activity has priority. Otherwise the Always-mode
@@ -253,8 +252,7 @@ constructor(
                 } == true || (nowBar.charging && nowBar.batteryMode == 1 &&
                     !charging && !hasText))
             } else {
-                (enabled && keyguardEnabled) ||
-                    (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
+                enabled && keyguardEnabled
             }
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
