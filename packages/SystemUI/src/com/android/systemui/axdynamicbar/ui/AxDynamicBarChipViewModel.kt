@@ -1,5 +1,11 @@
 package com.android.systemui.axdynamicbar.ui
 
+import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import com.android.systemui.animation.Expandable
 import com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor
 import com.android.systemui.islandevents.model.IslandEvent
@@ -52,6 +58,7 @@ class AxDynamicBarChipViewModel
 @Inject
 constructor(
     @Application private val applicationScope: CoroutineScope,
+    @Application private val applicationContext: Context,
     val interactor: AxDynamicBarInteractor,
     batteryInteractor: BatteryInteractor,
     private val batteryController: BatteryController,
@@ -157,11 +164,28 @@ constructor(
         awaitClose { keyguardIndicationController.removeIndicationListener(listener) }
     }
 
+    private val batteryInfoSettingTick: kotlinx.coroutines.flow.Flow<Unit> = callbackFlow {
+        val resolver = applicationContext.contentResolver
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                trySend(Unit)
+            }
+        }
+        resolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.LOCKSCREEN_BATTERY_INFO),
+            false,
+            observer,
+            UserHandle.USER_ALL,
+        )
+        awaitClose { resolver.unregisterContentObserver(observer) }
+    }
+
     val batteryString: StateFlow<String> =
         combine(
             keyguardBatteryInfo,
             batteryIndicationTick.onStart { emit(Unit) },
-        ) { info, _ -> info }
+            batteryInfoSettingTick.onStart { emit(Unit) },
+        ) { info, _, _ -> info }
             .map {
                 if (it.isCharging) {
                     formatChargingString(keyguardIndicationController.powerChargingString)
