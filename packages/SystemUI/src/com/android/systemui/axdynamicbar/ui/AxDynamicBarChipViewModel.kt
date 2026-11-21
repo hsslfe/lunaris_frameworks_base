@@ -180,6 +180,15 @@ constructor(
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 
+    /** Real Now Bar activity, excluding the optional Dynamic Bar battery-only fallback. */
+    val isNowBarActivityVisible: StateFlow<Boolean> =
+        combine(isOnKeyguard, nowBarAppearance, interactor.isDozing, chipState) {
+                onKeyguard, nowBar, dozing, state ->
+            onKeyguard && nowBar.enabled && !dozing &&
+                state?.allEvents?.isNotEmpty() == true
+        }.distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
     val isKeyguardChipVisible: StateFlow<Boolean> =
         combine(
             isOnKeyguard,
@@ -188,13 +197,18 @@ constructor(
             combine(
                 isKeyguardMusicPillEnabled, nowBarAppearance, interactor.isDozing,
             ) { pill, style, dozing -> Triple(pill, style, dozing) },
-            chipState,
-        ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing), state ->
+            combine(chipState, keyguardBatteryChipMode, keyguardBatteryInfo) {
+                    state, batteryMode, batteryInfo ->
+                Triple(state, batteryMode, batteryInfo.isCharging)
+            },
+        ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing),
+                (state, batteryMode, charging) ->
             onKeyguard && if (nowBar.enabled) {
-                // Now Bar must have a real lockscreen activity before the pill
-                // (or the bottom indication suppression) can become visible.
-                // A pending notification alert alone does not count as Now Bar content.
-                state?.allEvents?.isNotEmpty() == true && !dozing
+                // A real Now Bar activity takes priority. When none exists,
+                // honor the existing battery preference independently of Dynamic Bar:
+                // 0 = never, 1 = charging only, 2 = always.
+                !dozing && (state?.allEvents?.isNotEmpty() == true ||
+                    batteryMode == 2 || (batteryMode == 1 && charging))
             } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
