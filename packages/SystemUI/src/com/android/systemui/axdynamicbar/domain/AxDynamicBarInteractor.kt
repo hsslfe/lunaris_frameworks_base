@@ -231,6 +231,11 @@ constructor(
                 Triple(enabled, pillEnabled, nowBar.enabled)
             }.collect { (enabled, pillEnabled, nowBarEnabled) ->
                 if (!enabled) dismissNotificationAlert()
+                if (nowBarEnabled && settings.nowBarAppearance.value.charging) {
+                    // A charging event started in Dynamic Bar must not auto-dismiss
+                    // after Now Bar takes over its lifetime.
+                    autoDismissJobs.remove("charging")?.cancel()
+                }
                 // Any change to Now Bar's own event types refreshes its source subscriptions.
                 if (enabled || pillEnabled || nowBarEnabled) repository.startListening()
                 else {
@@ -272,7 +277,7 @@ constructor(
                     }
                 } to (kg to dozing)
             }.collect { (rawEvents, keyguardAndDoze) ->
-                val (onKeyguard, dozing) = keyguardAndDoze
+                val (onKeyguard, _) = keyguardAndDoze
                 dismissedEventIds.removeAll { id -> rawEvents.none { it.id == id } }
                 hiddenNowBarEventIds.removeAll { id -> rawEvents.none { it.id == id } }
                 val events = rawEvents.filter { e ->
@@ -312,29 +317,18 @@ constructor(
                             }
                         }
 
-                val aodAllowed = onKeyguard && dozing && !isDreaming &&
-                    settings.nowBarAppearance.value.let { it.enabled && it.aod }
                 val newState =
                     when {
                         events.isEmpty() -> IslandState.HIDDEN
-                        panelBlocking || (statusBlocking && !aodAllowed) -> IslandState.HIDDEN
+                        panelBlocking || statusBlocking -> IslandState.HIDDEN
                         else -> IslandState.CHIP
                     }
 
                 val prevPinnedId =
                     current.events.getOrNull(current.pinnedEventIndex)?.id
 
-                // Only an explicitly pinned LIVE update takes priority on AOD.
-                val aodPinnedIndex = if (aodAllowed) {
-                    val pinnedPackage = settings.nowBarAppearance.value.pinnedApp
-                    events.indexOfFirst {
-                        it is IslandEvent.PromotedOngoing &&
-                            it.sbn.packageName == pinnedPackage
-                    }
-                } else -1
                 val pinnedIndex =
                     when {
-                        aodPinnedIndex >= 0 -> aodPinnedIndex
                         hasNewEvents -> {
                             val currentIds = current.events.map { it.id }.toSet()
                             events.indexOfFirst { it.id !in currentIds }.coerceAtLeast(0)
@@ -612,9 +606,7 @@ constructor(
 
     private fun updateChipVisibility() {
         val current = _uiState.value
-        val aodAllowed = _isOnKeyguard.value && _isDozing.value && !isDreaming &&
-            settings.nowBarAppearance.value.let { it.enabled && it.aod }
-        val shouldHide = panelBlocking || (statusBlocking && !aodAllowed)
+        val shouldHide = panelBlocking || statusBlocking
         if (shouldHide && current.islandState == IslandState.CHIP) {
             _uiState.value = current.copy(islandState = IslandState.HIDDEN)
         } else if (!shouldHide && current.events.isNotEmpty() && current.islandState == IslandState.HIDDEN && !current.manuallyHidden) {
@@ -623,6 +615,10 @@ constructor(
     }
 
     private fun scheduleAutoDismiss(event: IslandEvent, delayOverride: Long? = null) {
+        // Keep the charging activity visible until unplugged when enabled in Now Bar.
+        if (event is IslandEvent.Charging &&
+            settings.nowBarAppearance.value.let { it.enabled && it.charging }
+        ) return
         // Now Bar has its own event lifecycle; do not require Dynamic Bar for
         // auto-expiring events (for example, a finished recording).
         if (!settings.isEnabled.value &&
