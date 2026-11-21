@@ -666,20 +666,26 @@ private fun KeyguardChipBody(
                     val metrics = chargingLines.drop(1).joinToString(" · ")
                     val textMeasurer = rememberTextMeasurer()
                     val density = LocalDensity.current
+                    // PillPrimary reads Compose state. Resolve it in the
+                    // composable scope, not inside remember's non-composable
+                    // calculation lambda.
+                    val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
+                    val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
+                    val baseTextStyle = PillPrimary
+                    val titleStyle = baseTextStyle.copy(fontSize = titleSize.sp)
+                    val detailStyle = baseTextStyle.copy(fontSize = detailSize.sp)
                     val requiredTextWidthPx = remember(
-                        title, metrics, nowBarStyle.height, textMeasurer,
+                        title, metrics, textMeasurer, titleStyle, detailStyle,
                     ) {
-                        val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
-                        val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
                         maxOf(
                             textMeasurer.measure(
                                 text = title,
-                                style = PillPrimary.copy(fontSize = titleSize.sp),
+                                style = titleStyle,
                                 maxLines = 1,
                             ).size.width,
                             if (metrics.isNotEmpty()) textMeasurer.measure(
                                 text = metrics,
-                                style = PillPrimary.copy(fontSize = detailSize.sp),
+                                style = detailStyle,
                                 maxLines = 1,
                             ).size.width else 0,
                         )
