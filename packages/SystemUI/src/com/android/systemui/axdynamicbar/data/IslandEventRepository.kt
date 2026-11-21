@@ -41,6 +41,14 @@ constructor(
     }
 
     @Volatile private var listenersStarted = false
+    // Only the visible lockscreen Now Bar uses persistent charging events.
+    private var nowBarLockscreenActive = false
+
+    fun setNowBarLockscreenActive(active: Boolean) {
+        if (nowBarLockscreenActive == active) return
+        nowBarLockscreenActive = active
+        if (listenersStarted) refreshChargingListener()
+    }
 
     // A change to Now Bar's options must recompute the existing source events
     // even if the underlying media/notification objects have not changed.
@@ -135,16 +143,7 @@ constructor(
         if (isTypeEnabled("vpn")) connectivity.startVpn()
         else connectivity.stopVpn()
 
-        // Now Bar shows charging for the entire plug-in session, including when it is
-        // enabled after the charger was already connected. Dynamic Bar keeps its
-        // original brief charging notification when Now Bar charging is disabled.
-        val persistentCharging = isNowBarTypeEnabled("charging")
-        if (system.persistWhilePluggedIn != persistentCharging) {
-            system.stopCharging()
-            system.persistWhilePluggedIn = persistentCharging
-        }
-        if (isTypeEnabled("charging")) system.startCharging()
-        else system.stopCharging()
+        refreshChargingListener()
         if (isTypeEnabled("ringer")) system.startRinger()
         else system.stopRinger()
         if (isTypeEnabled("clipboard")) system.startClipboard()
@@ -161,6 +160,18 @@ constructor(
         else smartspace.stopListening()
 
         settingsRevision.value += 1
+    }
+
+    private fun refreshChargingListener() {
+        // While the lockscreen Now Bar is visible, show charging until unplugged.
+        // Elsewhere, keep Dynamic Bar's original short charging alert behavior.
+        val persistentCharging = nowBarLockscreenActive && isNowBarTypeEnabled("charging")
+        if (system.persistWhilePluggedIn != persistentCharging) {
+            system.stopCharging()
+            system.persistWhilePluggedIn = persistentCharging
+        }
+        if (isTypeEnabled("charging")) system.startCharging()
+        else system.stopCharging()
     }
 
     private fun syncDisabledTypes() {
