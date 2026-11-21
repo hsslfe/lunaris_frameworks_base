@@ -23,7 +23,7 @@ data class AxLockscreenNowBarSettings(
     val shadow: Int = 0,
     val more: Int = 0,
     val height: Int = 58,
-    val width: Int = 1,
+    val width: Int = 180,
     val corners: Int = 100,
     val raise: Int = 0,
     val art: Int = 0,
@@ -89,7 +89,14 @@ data class AxLockscreenNowBarSettings(
                 shadow = value("now_bar_shadow", 0).coerceIn(0, 2),
                 more = value("now_bar_more", 0).coerceIn(0, 2),
                 height = value("now_bar_height", 58).coerceIn(48, 96),
-                width = value("now_bar_width", 1).coerceIn(0, 2),
+                // Convert previously stored three-choice values until Settings
+                // opens and migrates them to the new dp seekbar.
+                width = when (val savedWidth = value("now_bar_width", 180)) {
+                    0 -> 130
+                    1 -> 180
+                    2 -> 320
+                    else -> savedWidth.coerceIn(120, 420)
+                },
                 corners = value("now_bar_corners", 100).coerceIn(20, 100),
                 raise = value("now_bar_raise", 0).coerceIn(0, 40),
                 art = value("now_bar_art", 0).coerceIn(0, 3),
