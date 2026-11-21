@@ -49,6 +49,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
@@ -738,11 +739,23 @@ private fun KeyguardChipBody(
                     },
                     contentKey = { textKeyFor(it) },
                     label = "kg_chip_text",
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(
+                        1f,
+                        fill = nowBarStyle != null && event is IslandEvent.Charging,
+                    ),
                 ) { ev ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        KeyguardPrimaryText(ev, styledContentColor, Modifier.weight(1f, fill = false).widthIn(max = 110.dp), batteryString)
-                        val secondary = secondaryTextFor(ev)
+                    if (nowBarStyle != null && ev is IslandEvent.Charging) {
+                        NowBarResponsiveChargingText(
+                            event = ev,
+                            batteryString = batteryString,
+                            color = styledContentColor,
+                            heightDp = nowBarStyle.height,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            KeyguardPrimaryText(ev, styledContentColor, Modifier.weight(1f, fill = false).widthIn(max = 110.dp), batteryString)
+                            val secondary = secondaryTextFor(ev)
                         if (secondary != null) {
                             Text(
                                 " · ",
@@ -761,6 +774,7 @@ private fun KeyguardChipBody(
                                 ),
                             )
                         }
+                    }
                     }
                 }
             }
@@ -1067,6 +1081,67 @@ private fun AnimatedBatteryFillIcon(level: Int, color: Color, iconSize: Dp = Bat
                     color = color,
                     topLeft = Offset(fillAreaX, fillAreaY),
                     size = Size(fillAreaW * fillFraction, fillAreaH),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The collapsed Now Bar's charging activity uses the entire measured text area.
+ * Its width comes from the live Now Bar slider rather than Dynamic Bar's 110dp
+ * text cap, and its typography/line count also responds to the chosen height.
+ * No change is made to the original Dynamic Bar battery fallback or expanded UI.
+ */
+@Composable
+private fun NowBarResponsiveChargingText(
+    event: IslandEvent.Charging,
+    batteryString: String,
+    color: Color,
+    heightDp: Int,
+    modifier: Modifier = Modifier,
+) {
+    val parts = rememberChargingParts(batteryString)
+    val mainText = parts.firstOrNull() ?: "${event.level}%"
+    val secondaryText = parts.drop(1).joinToString(" · ").ifBlank {
+        event.timeRemaining.orEmpty()
+    }.takeIf { it.isNotBlank() && it != mainText }
+    val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+
+    BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
+        // Measure the real free area after the charging icon, padding and actions,
+        // not a legacy preset or the full screen width.
+        val compact = maxWidth < 105.dp
+        val showDetails = !compact && heightDp >= 56 && secondaryText != null
+        val baseFontSp = (heightDp * 0.26f).coerceIn(12f, 19f)
+        val primaryFontSp = if (compact) baseFontSp.coerceAtMost(13f) else baseFontSp
+        val detailFontSp = (heightDp * 0.18f).coerceIn(10f, 14f)
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = mainText,
+                style = PillPrimary.copy(fontSize = primaryFontSp.sp),
+                color = color,
+                maxLines = 1,
+                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().then(
+                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+                ),
+            )
+            if (showDetails) {
+                Text(
+                    text = secondaryText!!,
+                    style = PillPrimary.copy(fontSize = detailFontSp.sp),
+                    color = color.copy(alpha = AlphaSecondary),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
