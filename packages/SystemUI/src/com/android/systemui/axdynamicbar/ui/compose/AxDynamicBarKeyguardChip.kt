@@ -283,6 +283,7 @@ fun AxDynamicBarKeyguardChip(
                     interactor = viewModel.interactor,
                     onCollapse = { viewModel.keyguardExpansion.collapse() },
                     hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
+                    stabilizeMediaArtwork = nowBarStyle.enabled,
                 )
             }
         }
