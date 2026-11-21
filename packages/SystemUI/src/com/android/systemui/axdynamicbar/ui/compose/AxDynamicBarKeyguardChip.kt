@@ -1200,51 +1200,56 @@ private fun NowBarResponsiveChargingText(
     batteryString: String,
     color: Color,
     heightDp: Int,
+    availableWidth: Dp,
     modifier: Modifier = Modifier,
 ) {
     val parts = rememberChargingParts(batteryString)
-    val mainText = parts.firstOrNull() ?: "${event.level}%"
+    val detailedText = parts.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: "${event.level}%"
     val secondaryText = parts.drop(1).joinToString(" · ").ifBlank {
         event.timeRemaining.orEmpty()
-    }.takeIf { it.isNotBlank() && it != mainText }
+    }.takeIf { it.isNotBlank() && it != detailedText }
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val compact = availableWidth < 112.dp || heightDp <= 52
+    // A short pill must retain useful text instead of clipping the long
+    // system charging message. Width determines how much detail fits.
+    val mainText = when {
+        !compact -> detailedText
+        availableWidth < 90.dp -> "${event.level}%"
+        else -> "${event.level}% · ${stringResource(R.string.ax_dynamic_bar_charging)}"
+    }
+    val showDetails = heightDp >= 60 && availableWidth >= 136.dp &&
+        secondaryText != null
+    val baseFontSp = (heightDp * 0.26f).coerceIn(11f, 18f)
+    val primaryFontSp = if (compact) baseFontSp.coerceAtMost(13f) else baseFontSp
+    val detailFontSp = (heightDp * 0.18f).coerceIn(10f, 14f)
 
-    BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
-        // Measure the real free area after the charging icon, padding and actions,
-        // not a legacy preset or the full screen width.
-        val compact = maxWidth < 105.dp
-        val showDetails = !compact && heightDp >= 56 && secondaryText != null
-        val baseFontSp = (heightDp * 0.26f).coerceIn(12f, 19f)
-        val primaryFontSp = if (compact) baseFontSp.coerceAtMost(13f) else baseFontSp
-        val detailFontSp = (heightDp * 0.18f).coerceIn(10f, 14f)
-
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = mainText,
+            style = PillPrimary.copy(fontSize = primaryFontSp.sp),
+            color = color,
+            maxLines = 1,
+            overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = availableWidth).then(
+                if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+            ),
+        )
+        if (showDetails && secondaryText != null) {
             Text(
-                text = mainText,
-                style = PillPrimary.copy(fontSize = primaryFontSp.sp),
-                color = color,
+                text = secondaryText,
+                style = PillPrimary.copy(fontSize = detailFontSp.sp),
+                color = color.copy(alpha = AlphaSecondary),
                 maxLines = 1,
-                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().then(
-                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
-                ),
+                modifier = Modifier.widthIn(max = availableWidth),
             )
-            if (showDetails && secondaryText != null) {
-                Text(
-                    text = secondaryText,
-                    style = PillPrimary.copy(fontSize = detailFontSp.sp),
-                    color = color.copy(alpha = AlphaSecondary),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
         }
     }
 }
@@ -1289,7 +1294,11 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
                 MarqueeText(if (parts.isNotEmpty()) parts[0] else "${event.level}%", color, modifier)
             }
         }
-        is IslandEvent.Bluetooth -> MarqueeText(event.deviceName.take(12), color, modifier)
+        is IslandEvent.Bluetooth -> MarqueeText(
+            if (LocalNowBarTextMaxWidth.current != null) event.deviceName
+            else event.deviceName.take(12),
+            color, modifier,
+        )
         is IslandEvent.Hotspot -> {
             val hotspotLabel = stringResource(R.string.ax_dynamic_bar_hotspot)
             MarqueeText(
@@ -1599,13 +1608,17 @@ private fun chipStrokeColor(): Color {
 @Composable
 private fun MarqueeText(text: String, color: Color, modifier: Modifier) {
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val customMaxWidth = LocalNowBarTextMaxWidth.current
+    val customFontSp = LocalNowBarTextFontSp.current
     Text(
         text,
         color = color,
-        style = PillPrimary,
+        style = if (customFontSp != null) PillPrimary.copy(fontSize = customFontSp.sp)
+            else PillPrimary,
         maxLines = 1,
         overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
-        modifier = modifier.widthIn(max = 120.dp).then(
+        textAlign = if (customMaxWidth != null) TextAlign.Center else TextAlign.Start,
+        modifier = modifier.widthIn(max = customMaxWidth ?: 120.dp).then(
             if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
         ),
     )
