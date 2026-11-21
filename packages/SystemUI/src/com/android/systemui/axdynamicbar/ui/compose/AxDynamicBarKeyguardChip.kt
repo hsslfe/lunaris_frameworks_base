@@ -425,20 +425,6 @@ private fun KeyguardChipBody(
     val onPillLongClick: () -> Unit = {
         if (nowBarStyle != null) {
             val menu = android.widget.PopupMenu(context, popupAnchor)
-            val livePackage = (event as? IslandEvent.PromotedOngoing)?.sbn?.packageName
-            if (!livePackage.isNullOrBlank()) {
-                val pinned = nowBarStyle.pinnedApp == livePackage
-                menu.menu.add(if (pinned) "Unpin from AOD" else "Pin to AOD")
-                    .setOnMenuItemClickListener {
-                        android.provider.Settings.System.putStringForUser(
-                            context.contentResolver,
-                            "now_bar_pin",
-                            if (pinned) "" else livePackage,
-                            android.os.UserHandle.USER_CURRENT,
-                        )
-                        true
-                    }
-            }
             menu.menu.add("Hide until activity ends").setOnMenuItemClickListener {
                 viewModel.interactor.hideNowBarEvent(event)
                 true
