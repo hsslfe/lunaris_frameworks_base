@@ -143,13 +143,29 @@ internal fun rememberKeyguardMediaArtwork(
         lastTrack = observedTrack
     }
     val trackId = if (event.track.isBlank()) lastTrack else observedTrack
-    var stableArtwork by remember(trackId) { mutableStateOf(event.albumArt) }
-    if (stableArtwork == null && event.albumArt != null) {
-        stableArtwork = event.albumArt
+    var stableFrame by remember {
+        mutableStateOf(KeyguardMediaArtworkFrame(trackId, event.albumArt))
     }
-    return remember(trackId, stableArtwork) {
-        KeyguardMediaArtworkFrame(trackId, stableArtwork)
+
+    if (event.albumArt != null && stableFrame.trackId != trackId) {
+        // One genuine track transition: old album -> new album.
+        stableFrame = KeyguardMediaArtworkFrame(trackId, event.albumArt)
+    } else if (event.albumArt != null && stableFrame.drawable == null) {
+        // Artwork arrived after the track metadata; show it once.
+        stableFrame = KeyguardMediaArtworkFrame(trackId, event.albumArt)
     }
+    LaunchedEffect(trackId, event.albumArt == null) {
+        if (event.albumArt == null && stableFrame.trackId != trackId) {
+            // Some players publish track metadata before the matching image.
+            // Retain the previous image briefly, then fall back if the new
+            // track genuinely has no artwork. This is one delay, not polling.
+            delay(280L)
+            if (stableFrame.trackId != trackId) {
+                stableFrame = KeyguardMediaArtworkFrame(trackId, null)
+            }
+        }
+    }
+    return stableFrame
 }
 
 @Composable
@@ -159,6 +175,7 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
     interactor: IslandActions,
     onCollapse: () -> Unit,
     hapticsViewModelFactory: SliderHapticsViewModel.Factory,
+    stabilizeMediaArtwork: Boolean = false,
 ) {
     if (event is IslandEvent.KeyguardIndication ||
         event is IslandEvent.AppSwitch ||
@@ -194,7 +211,10 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
         contentAlignment = Alignment.Center,
     ) {
         if (event is IslandEvent.Media) {
-            KeyguardMediaPanel(event, interactor, Modifier.align(Alignment.BottomCenter))
+            KeyguardMediaPanel(
+                event, interactor, Modifier.align(Alignment.BottomCenter),
+                stabilizeMediaArtwork = stabilizeMediaArtwork,
+            )
         } else {
             when (event) {
                 is IslandEvent.Timer -> KeyguardTimerPanel(event, interactor)
@@ -292,11 +312,16 @@ private fun KeyguardMediaPanel(
     event: IslandEvent.Media,
     interactor: IslandActions,
     modifier: Modifier,
+    stabilizeMediaArtwork: Boolean,
 ) {
-    val artworkFrame = rememberKeyguardMediaArtwork(event)
-    // Color extraction follows the retained art, not transient album-art
-    // wrappers supplied by a player when toggling pause or seeking.
-    val colors = rememberMediaColors(event.copy(albumArt = artworkFrame.drawable), useAlbumArt = true)
+    // Only Now Bar retains images across pause/metadata refreshes. Classic
+    // Dynamic Bar keeps the original direct-Drawable transitions.
+    val albumArt = if (stabilizeMediaArtwork)
+        rememberKeyguardMediaArtwork(event).drawable else event.albumArt
+    val colors = rememberMediaColors(
+        if (stabilizeMediaArtwork) event.copy(albumArt = albumArt) else event,
+        useAlbumArt = true,
+    )
     val motionScheme = MaterialTheme.motionScheme
 
     BoxWithConstraints(
@@ -320,15 +345,15 @@ private fun KeyguardMediaPanel(
         val sectionSpacing = if (compact) SpaceMd else SpaceLg
 
         Crossfade(
-            targetState = artworkFrame,
+            targetState = albumArt,
             modifier = Modifier.matchParentSize(),
             animationSpec = motionScheme.defaultEffectsSpec(),
             label = "kg_media_backdrop",
-        ) { frame ->
+        ) { art ->
             Box(modifier = Modifier.fillMaxSize()) {
-                if (frame.drawable != null) {
+                if (art != null) {
                     Image(
-                        bitmap = frame.drawable.toSquareScaledBitmap(350.dp),
+                        bitmap = art.toSquareScaledBitmap(350.dp),
                         contentDescription = null,
                         modifier = Modifier
                             .matchParentSize()
@@ -382,14 +407,14 @@ private fun KeyguardMediaPanel(
                 contentAlignment = Alignment.Center,
             ) {
                 Crossfade(
-                    targetState = artworkFrame,
+                    targetState = albumArt,
                     modifier = Modifier.size(minOf(maxWidth, maxHeight, KeyguardMediaArtworkMaxSize)),
                     animationSpec = motionScheme.defaultEffectsSpec(),
                     label = "kg_media_album_art",
-                ) { frame ->
-                    if (frame.drawable != null) {
+                ) { art ->
+                    if (art != null) {
                         Image(
-                            bitmap = frame.drawable.toSquareScaledBitmap(KeyguardMediaArtworkMaxSize),
+                            bitmap = art.toSquareScaledBitmap(KeyguardMediaArtworkMaxSize),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxSize()
