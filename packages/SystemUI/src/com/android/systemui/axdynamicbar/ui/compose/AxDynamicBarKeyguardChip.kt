@@ -1363,7 +1363,7 @@ private fun AospKeyguardChipText(
         is OngoingActivityChipModel.Content.Countdown -> Text(
             formatCountdownLong(content.secondsUntilStarted * 1000L),
             color = color,
-            style = PillMono,
+            style = adaptiveNowBarMonoStyle(),
             modifier = modifier,
         )
         is OngoingActivityChipModel.Content.IconOnly -> Unit
@@ -1385,7 +1385,7 @@ private fun AospKeyguardTimerText(
             delay(1000L - abs(content.startTimeMs - content.timeSource.getCurrentTime()) % 1000L)
         }
     }
-    Text(formatCountdownLong(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    Text(formatCountdownLong(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
 }
 
 private fun aospTimerElapsedMs(content: OngoingActivityChipModel.Content.Timer): Long {
@@ -1488,7 +1488,7 @@ private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideC
             }
         }
         val color = overrideColor ?: GreenAccent
-        Text(formatElapsedTime(elapsedMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatElapsedTime(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         MarqueeText(
             stringResource(if (isActive) R.string.ax_dynamic_bar_call else R.string.ax_dynamic_bar_incoming_call),
@@ -1625,6 +1625,12 @@ private fun chipStrokeColor(): Color {
 }
 
 @Composable
+private fun adaptiveNowBarMonoStyle(): TextStyle {
+    val customFontSp = LocalNowBarTextFontSp.current
+    return if (customFontSp != null) PillMono.copy(fontSize = customFontSp.sp) else PillMono
+}
+
+@Composable
 private fun MarqueeText(text: String, color: Color, modifier: Modifier) {
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
     val customMaxWidth = LocalNowBarTextMaxWidth.current
@@ -1662,13 +1668,13 @@ private fun ElapsedTimeText(
                 .coerceAtLeast(0L)
         }
     }
-    Text(formatCountdownLong(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    Text(formatCountdownLong(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
 }
 
 @Composable
 private fun CountdownText(event: IslandEvent.Timer, color: Color, modifier: Modifier) {
     if (event.isPaused) {
-        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = PillMono, modifier = modifier)
+        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         var remainingMs by remember(event.endTimeMs) {
             mutableLongStateOf((event.endTimeMs - System.currentTimeMillis()).coerceAtLeast(0L))
@@ -1679,14 +1685,14 @@ private fun CountdownText(event: IslandEvent.Timer, color: Color, modifier: Modi
                 remainingMs = (event.endTimeMs - System.currentTimeMillis()).coerceAtLeast(0L)
             }
         }
-        Text(formatCountdownLong(remainingMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatCountdownLong(remainingMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     }
 }
 
 @Composable
 private fun StopwatchTimeText(event: IslandEvent.Stopwatch, color: Color, modifier: Modifier) {
     if (!event.isRunning) {
-        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = PillMono, modifier = modifier)
+        Text(stringResource(R.string.ax_dynamic_bar_paused), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     } else {
         var elapsedMs by remember(event.startTimeMs) {
             mutableLongStateOf((System.currentTimeMillis() - event.startTimeMs).coerceAtLeast(0L))
@@ -1697,7 +1703,7 @@ private fun StopwatchTimeText(event: IslandEvent.Stopwatch, color: Color, modifi
                 elapsedMs = (System.currentTimeMillis() - event.startTimeMs).coerceAtLeast(0L)
             }
         }
-        Text(formatStopwatch(elapsedMs), color = color, style = PillMono, modifier = modifier)
+        Text(formatStopwatch(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
     }
 }
 
