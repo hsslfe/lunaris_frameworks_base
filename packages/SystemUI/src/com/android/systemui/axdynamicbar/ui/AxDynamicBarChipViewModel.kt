@@ -94,6 +94,8 @@ constructor(
     val isKeyguardEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardEnabled
     val keyguardBatteryChipMode: StateFlow<Int> = interactor.settings.keyguardBatteryChipMode
     val isKeyguardMusicPillEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardMusicPillEnabled
+    val nowBarAppearance: StateFlow<com.android.systemui.axdynamicbar.domain.AxLockscreenNowBarSettings> =
+        interactor.settings.nowBarAppearance
     val isMediaEventTypeEnabled: StateFlow<Boolean> =
         interactor.settings.disabledEventTypes
             .map { "media" !in it }
@@ -183,13 +185,19 @@ constructor(
             isOnKeyguard,
             isEnabled,
             isKeyguardEnabled,
-            isKeyguardMusicPillEnabled,
+            combine(
+                isKeyguardMusicPillEnabled, nowBarAppearance, interactor.isDozing,
+            ) { pill, style, dozing -> Triple(pill, style, dozing) },
             chipState,
-        ) { onKeyguard, enabled, keyguardEnabled, pillEnabled, state ->
-            onKeyguard && (
+        ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing), state ->
+            onKeyguard && if (nowBar.enabled) {
+                // The independent Now Bar displays any of its enabled activity types.
+                // On AOD it only appears when the Now Bar's own AOD switch is enabled.
+                state != null && (!dozing || nowBar.aod)
+            } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
-            )
+            }
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 

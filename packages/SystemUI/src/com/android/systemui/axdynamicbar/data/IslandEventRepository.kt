@@ -42,6 +42,10 @@ constructor(
 
     @Volatile private var listenersStarted = false
 
+    // A change to Now Bar's options must recompute the existing source events
+    // even if the underlying media/notification objects have not changed.
+    private val settingsRevision = MutableStateFlow(0)
+
     private val _indicationEvents =
         MutableStateFlow<Map<String, IslandEvent.KeyguardIndication>>(emptyMap())
 
@@ -61,11 +65,36 @@ constructor(
 
     private val disabled get() = settings.disabledEventTypes.value
 
+    private fun isNowBarTypeEnabled(typeId: String): Boolean {
+        val nowBar = settings.nowBarAppearance.value
+        if (!nowBar.enabled) return false
+        return when (typeId) {
+            "media", "now_playing" -> nowBar.music
+            "timer", "stopwatch", "alarm" -> nowBar.timers
+            "call" -> nowBar.calls
+            "promoted_ongoing" -> nowBar.live
+            "sports" -> nowBar.scores
+            "audio_recording" -> nowBar.recording
+            "charging" -> nowBar.charging
+            "torch" -> nowBar.flashlight
+            "bluetooth" -> nowBar.buds
+            else -> false
+        }
+    }
+
+    // Dynamic Bar has its own event-type settings. Now Bar only adds its
+    // independently selected activity sources; it never changes those settings.
     private fun isTypeEnabled(typeId: String): Boolean =
-        settings.isEnabled.value && typeId !in disabled
+        (settings.isEnabled.value && typeId !in disabled) || isNowBarTypeEnabled(typeId)
 
     private fun isMediaSourceNeeded(): Boolean =
         isTypeEnabled("media") || settings.isKeyguardMusicPillEnabled.value
+
+    private fun needsNowBarNotifications(): Boolean = listOf(
+        "timer", "stopwatch", "alarm", "call", "promoted_ongoing",
+        "sports", "audio_recording", "now_playing",
+    ).any(::isNowBarTypeEnabled)
+
 
     fun startListening() {
         if (!listenersStarted) {
@@ -96,7 +125,7 @@ constructor(
         if (isMediaSourceNeeded()) media.startListening()
         else media.stopListening()
 
-        if (settings.isEnabled.value) notification.startListening()
+        if (settings.isEnabled.value || needsNowBarNotifications()) notification.startListening()
         else notification.stopListening()
 
         if (isTypeEnabled("bluetooth")) connectivity.startBluetooth()
@@ -122,10 +151,13 @@ constructor(
 
         if (isTypeEnabled("media") || isTypeEnabled("sports")) smartspace.startListening()
         else smartspace.stopListening()
+
+        settingsRevision.value += 1
     }
 
     private fun syncDisabledTypes() {
-        notification.disabledTypes = disabled
+        // A disabled Dynamic Bar type must not suppress an enabled Now Bar source.
+        notification.disabledTypes = disabled.filterNot(::isNowBarTypeEnabled).toSet()
     }
 
     private fun buildEventsFlow(): Flow<List<IslandEvent>> {
@@ -133,7 +165,8 @@ constructor(
         val sportsGroup = combine(
             smartspace.sportsEvents,
             notification.sportsEvents,
-        ) { qlSports, notifSports ->
+            settingsRevision,
+        ) { qlSports, notifSports, _ ->
             if (!isTypeEnabled("sports")) emptyList()
             else qlSports + notifSports.filter { ns ->
                 qlSports.none { qs ->
@@ -151,8 +184,9 @@ constructor(
         val highGroup = combine(
             notification.callEvents,
             torch.torchEvent,
-            biometric.biometricEvent
-        ) { call, t, bio ->
+            biometric.biometricEvent,
+            settingsRevision,
+        ) { call, t, bio, _ ->
                 (if (isTypeEnabled("call")) call else emptyList()) +
                 listOfNotNull(
                     t?.takeIf { isTypeEnabled("torch") },
@@ -161,7 +195,7 @@ constructor(
             }
         val midGroup =
             combine(
-                media.mediaEvent,
+                media.mediaEvent.combine(settingsRevision) { item, _ -> item },
                 connectivity.bluetoothEvent,
                 connectivity.hotspotEvent,
                 system.chargingEvent,
@@ -177,7 +211,7 @@ constructor(
             }
         val lowGroupA =
             combine(
-                notification.timerEvent,
+                notification.timerEvent.combine(settingsRevision) { item, _ -> item },
                 notification.stopwatchEvent,
                 system.ringerEvent,
                 connectivity.vpnEvent,
@@ -201,7 +235,7 @@ constructor(
                 a + listOfNotNull(
                     appSwitch?.takeIf { isTypeEnabled("app_switch") },
                     audioRec?.takeIf { isTypeEnabled("audio_recording") },
-                    nowPlaying?.takeIf { isTypeEnabled("media") },
+                    nowPlaying?.takeIf { isTypeEnabled("now_playing") || isTypeEnabled("media") },
                 )
             }
         val transientGroup = combine(midGroup, lowGroup) { mid, low -> mid + low }
