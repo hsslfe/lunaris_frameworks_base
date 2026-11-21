@@ -83,6 +83,10 @@ constructor(
     private var expansionHandle: DisposableHandle? = null
     private var enforceAction: Runnable? = null
     private val hiddenViews = mutableSetOf<View>()
+    // While the collapsed Now Bar's expanded content fades away, keep the
+    // native host anchored in its expanded slot. Reposition only once Compose
+    // signals that the exit transition has fully settled.
+    private var nowBarExitPending = false
 
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
@@ -148,6 +152,7 @@ constructor(
                     scope.launch {
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
+                                nowBarExitPending = false
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
                             }
@@ -188,7 +193,10 @@ constructor(
                         }
                             .distinctUntilChanged()
                             .collect { (expanded, lowUdfps, _) ->
-                                if (!expanded) {
+                                if (!expanded && !nowBarExitPending) {
+                                    // Raise/UD FPS updates remain immediate when
+                                    // fully collapsed, but must not move an exiting
+                                    // expanded panel before its fade is complete.
                                     applyCollapsedLp(composeView, lowUdfps)
                                 }
                             }
@@ -221,12 +229,16 @@ constructor(
         expanded: Boolean,
         lowUdfps: Boolean,
     ) {
+        if (expanded && viewModel.nowBarAppearance.value.enabled) {
+            nowBarExitPending = true
+        }
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
         rebindPreDrawAction(constraintLayout, expanded)
         TransitionManager.endTransitions(constraintLayout)
         constraintLayout.requireViewById<View>(dismissViewId).visibility =
             if (expanded) View.VISIBLE else View.GONE
-        if (!expanded && !viewModel.keyguardExpansion.canShow.value) {
+        if (!expanded && !viewModel.keyguardExpansion.canShow.value &&
+            !nowBarExitPending) {
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
         if (expanded) {
@@ -303,7 +315,7 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        val expanded = viewModel.isKeyguardExpanded.value
+        val expanded = viewModel.isKeyguardExpanded.value || nowBarExitPending
         val lowUdfps = viewModel.isLowUdfps.value
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         val chipAboveLockPx = CHIP_ABOVE_LOCK_MARGIN_DP.dpToPx(context)
@@ -446,6 +458,7 @@ constructor(
     }
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
+        nowBarExitPending = false
         TransitionManager.endTransitions(constraintLayout)
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
