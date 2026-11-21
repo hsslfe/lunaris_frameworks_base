@@ -152,7 +152,18 @@ constructor(
                     scope.launch {
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
-                                nowBarExitPending = false
+                                // Complete the exit atomically: restoring the
+                                // wallpaper or other lockscreen layers earlier
+                                // makes the whole display flash while music fades.
+                                if (nowBarExitPending) {
+                                    nowBarExitPending = false
+                                    rebindPreDrawAction(constraintLayout, false)
+                                    WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
+                                    constraintLayout.requireViewById<View>(dismissViewId)
+                                        .visibility = View.GONE
+                                    MediaViewController.getOrNull()
+                                        ?.setExpandedMusicOpen(false)
+                                }
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
                             }
@@ -177,8 +188,13 @@ constructor(
                             }
                             .distinctUntilChanged()
                             .collect { expandedMusicOpen ->
-                                com.android.systemui.media.MediaViewController.getOrNull()
-                                    ?.setExpandedMusicOpen(expandedMusicOpen)
+                                // A track change may briefly clear chipState.
+                                // Keep the media backdrop stable until the
+                                // actual expanded exit has finished.
+                                if (expandedMusicOpen || !nowBarExitPending) {
+                                    MediaViewController.getOrNull()
+                                        ?.setExpandedMusicOpen(expandedMusicOpen)
+                                }
                             }
                     }
                     scope.launch {
@@ -231,6 +247,11 @@ constructor(
     ) {
         if (expanded && viewModel.nowBarAppearance.value.enabled) {
             nowBarExitPending = true
+        } else if (!expanded && nowBarExitPending) {
+            // The Compose expanded panel is still fading away. Do not change
+            // wallpaper depth, pre-draw suppression or parent constraints yet.
+            // The collapseSettled callback restores all of them together.
+            return
         }
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
         rebindPreDrawAction(constraintLayout, expanded)
