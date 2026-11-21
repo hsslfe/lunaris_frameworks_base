@@ -92,6 +92,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -602,6 +603,20 @@ private fun KeyguardMediaPanel(
                             }
                         }
 
+                        // Some media apps briefly report duration = 0 when
+                        // advancing tracks. Without the progress row the panel
+                        // shrinks, then bounces back when metadata arrives.
+                        // Remember whether this app has displayed a seek bar,
+                        // but do not show stale progress or allow seeking while
+                        // the current duration is unknown.
+                        var hadSeekableMedia by remember(event.packageName) {
+                            mutableStateOf(event.duration > 0L)
+                        }
+                        if (stabilizeMediaArtwork && event.duration > 0L &&
+                            !hadSeekableMedia) {
+                            hadSeekableMedia = true
+                        }
+
                         if (event.duration > 0L) {
                             Spacer(Modifier.height(SpaceMd))
                             val mediaProgress = rememberMediaProgress(event)
@@ -670,6 +685,29 @@ private fun KeyguardMediaPanel(
                                 Text(
                                     formatElapsedTime(event.duration),
                                     color = Color.White.copy(alpha = AlphaSecondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        } else if (stabilizeMediaArtwork && hadSeekableMedia) {
+                            // Reserve the identical progress-row height during
+                            // a metadata gap. This is invisible, not seekable,
+                            // and keeps Now Bar artwork, controls and card still.
+                            // Classic Dynamic Bar's layout remains unchanged.
+                            Spacer(Modifier.height(SpaceMd))
+                            Spacer(Modifier.height(SpaceSection))
+                            Spacer(Modifier.height(SpaceXs))
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "00:00",
+                                    color = Color.Transparent,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                                Text(
+                                    "00:00",
+                                    color = Color.Transparent,
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             }
