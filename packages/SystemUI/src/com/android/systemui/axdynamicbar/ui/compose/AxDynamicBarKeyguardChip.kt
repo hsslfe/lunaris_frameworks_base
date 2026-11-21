@@ -439,7 +439,12 @@ fun AxDynamicBarKeyguardChip(
                                 if (nowBarStyle.enabled)
                                     (nowBarStyle.height * 0.26f).coerceIn(
                                         11f, nowBarStyle.textSize.toFloat().coerceAtLeast(11f)
-                                    )
+                                    ) + when (event) {
+                                        is IslandEvent.Media,
+                                        is IslandEvent.NowPlaying,
+                                        is IslandEvent.Charging -> 0f
+                                        else -> 1f
+                                    }
                                 else null,
                         ) {
                             KeyguardChipBody(
@@ -1402,14 +1407,12 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
             if (LocalNowBarTextMaxWidth.current != null) event.deviceName
             else event.deviceName.take(12),
             color, modifier,
-            fontSizeAdjustSp = if (LocalNowBarTextFontSp.current != null) 1f else 0f,
         )
         is IslandEvent.Hotspot -> {
             val hotspotLabel = stringResource(R.string.ax_dynamic_bar_hotspot)
             MarqueeText(
                 "$hotspotLabel · ${event.numDevices}",
                 color, modifier,
-                fontSizeAdjustSp = if (LocalNowBarTextFontSp.current != null) 1f else 0f,
             )
         }
         is IslandEvent.Alarm -> MarqueeText(event.label.ifEmpty { stringResource(R.string.ax_dynamic_bar_alarm) }, color, modifier)
@@ -1727,7 +1730,6 @@ private fun MarqueeText(
     text: String,
     color: Color,
     modifier: Modifier,
-    fontSizeAdjustSp: Float = 0f,
 ) {
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
     val customMaxWidth = LocalNowBarTextMaxWidth.current
@@ -1736,7 +1738,7 @@ private fun MarqueeText(
         text,
         color = color,
         style = if (customFontSp != null)
-            PillPrimary.copy(fontSize = (customFontSp + fontSizeAdjustSp).sp)
+            PillPrimary.copy(fontSize = customFontSp.sp)
             else PillPrimary,
         maxLines = 1,
         overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
