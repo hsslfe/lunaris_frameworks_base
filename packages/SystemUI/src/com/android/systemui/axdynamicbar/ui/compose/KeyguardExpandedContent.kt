@@ -308,6 +308,26 @@ private fun TonalBanner(
 }
 
 @Composable
+private fun KeyguardMediaBackdropOverlay(accent: Color) {
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.30f),
+                    0.45f to Color.Black.copy(alpha = 0.55f),
+                    1f to Color.Black.copy(alpha = 0.88f),
+                )
+            )
+    )
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(accent.copy(alpha = 0.08f))
+    )
+}
+
+@Composable
 private fun KeyguardMediaPanel(
     event: IslandEvent.Media,
     interactor: IslandActions,
@@ -372,24 +392,17 @@ private fun KeyguardMediaPanel(
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.30f),
-                                0.45f to Color.Black.copy(alpha = 0.55f),
-                                1f to Color.Black.copy(alpha = 0.88f),
-                            )
-                        )
-                )
-
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(colors.accent.copy(alpha = 0.08f))
-                )
+                if (!stabilizeMediaArtwork) {
+                    // Preserve the original Dynamic Bar artwork transition.
+                    KeyguardMediaBackdropOverlay(colors.accent)
+                }
             }
+        }
+        if (stabilizeMediaArtwork) {
+            // Now Bar: keep both overlays in a stable layer while album art
+            // crossfades underneath. The whole card must not fade or flash
+            // when a player updates the artwork on pause / track switch.
+            KeyguardMediaBackdropOverlay(colors.accent)
         }
 
         Column(
