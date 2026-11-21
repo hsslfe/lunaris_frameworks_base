@@ -291,7 +291,17 @@ fun AxDynamicBarKeyguardChip(
                 },
         ) {
             val chipState = state
-            if (chipState != null) {
+            if (nowBarStyle.enabled && chipState?.allEvents.isNullOrEmpty()) {
+                // No live Now Bar event: show the existing Dynamic Bar battery pill
+                // according to its Never / While charging / Always setting.
+                // The battery fallback is not a Now Bar activity.
+                KeyguardBatteryChip(
+                    batteryInfo,
+                    keyguardBatteryChipMode,
+                    batteryString,
+                    modifier,
+                )
+            } else if (chipState != null) {
                 val rawEvent = chipState.notificationAlert ?: chipState.event
                 val displayEvent: com.android.systemui.islandevents.model.IslandEvent? =
                     when {
