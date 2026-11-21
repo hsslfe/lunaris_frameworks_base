@@ -107,6 +107,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -442,15 +443,13 @@ private fun KeyguardChipBody(
     }
     val dynamicMinWidth = if (isMedia) MusicChipMinWidth else 48.dp
     val styledHeight = if (nowBarStyle != null) nowBarStyle.height.dp else dynamicHeight
-    val styledMinWidth = if (nowBarStyle != null) {
-        when (nowBarStyle.width) {
-            0 -> 110.dp
-            2 -> 280.dp
-            else -> dynamicMinWidth
-        }
-    } else dynamicMinWidth
-    val styledMaxWidth = if (nowBarStyle?.width == 2) 420.dp
-        else if (nowBarStyle?.width == 0) 148.dp else 180.dp
+    // Width is a continuous dp setting for Now Bar only. Keep the original
+    // dynamic music-pill measurements when Now Bar is not selected.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val availableWidthDp = (screenWidthDp - 24).coerceAtLeast(120)
+    val styledWidth = nowBarStyle?.width?.coerceIn(120, availableWidthDp)?.dp
+    val chipWidthModifier = if (styledWidth != null) Modifier.width(styledWidth)
+        else Modifier.widthIn(min = dynamicMinWidth, max = 180.dp)
     val styledShape = if (nowBarStyle != null)
         RoundedCornerShape((nowBarStyle.height * nowBarStyle.corners / 200f).dp)
         else ChipShape
@@ -490,11 +489,10 @@ private fun KeyguardChipBody(
         else -> CircleShape
     }
 
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = if (nowBarStyle != null) Modifier.offset(y = (-nowBarStyle.raise).dp)
-            else Modifier,
-    ) {
+    // The host ConstraintLayout positions the entire collapsed Now Bar for
+    // Raise. Offsetting only this child could draw outside the ComposeView and
+    // clip its background, artwork and touch target.
+    Box(contentAlignment = Alignment.Center) {
         if (!isDozing && (nowBarStyle == null || nowBarStyle.material == 1)) {
             Box(modifier = Modifier.matchParentSize()) {
                 AndroidView(
@@ -514,7 +512,7 @@ private fun KeyguardChipBody(
         Row(
             modifier = Modifier
                 .height(styledHeight)
-                .widthIn(min = styledMinWidth, max = styledMaxWidth)
+                .then(chipWidthModifier)
                 .shadow(styledShadow, styledShape)
                 .border(BorderStroke(styledStrokeWidth, styledStroke), styledShape)
                 .clip(styledShape)
