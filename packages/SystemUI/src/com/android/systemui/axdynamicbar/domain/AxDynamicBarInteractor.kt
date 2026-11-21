@@ -241,12 +241,11 @@ constructor(
         applicationScope.launch {
             combine(
                 settings.isEnabled,
-                settings.isKeyguardMusicPillEnabled,
                 settings.nowBarAppearance,
                 settings.disabledEventTypes,
-            ) { enabled, pillEnabled, nowBar, _ ->
-                Triple(enabled, pillEnabled, nowBar.enabled)
-            }.collect { (enabled, pillEnabled, nowBarEnabled) ->
+            ) { enabled, nowBar, _ ->
+                enabled to nowBar.enabled
+            }.collect { (enabled, nowBarEnabled) ->
                 if (!enabled) dismissNotificationAlert()
                 if (nowBarEnabled && settings.nowBarAppearance.value.charging) {
                     // A charging event started in Dynamic Bar must not auto-dismiss
@@ -254,7 +253,7 @@ constructor(
                     autoDismissJobs.remove("charging")?.cancel()
                 }
                 // Any change to Now Bar's own event types refreshes its source subscriptions.
-                if (enabled || pillEnabled || nowBarEnabled) repository.startListening()
+                if (enabled || nowBarEnabled) repository.startListening()
                 else {
                     repository.stopListening()
                     autoDismissJobs.values.forEach { it.cancel() }
@@ -280,15 +279,14 @@ constructor(
                 combine(settings.isEnabled, settings.isKeyguardEnabled) { enabled, kgEnabled ->
                     enabled to kgEnabled
                 },
-                combine(settings.isKeyguardMusicPillEnabled, settings.nowBarAppearance) {
-                    pillEnabled, nowBar -> pillEnabled to nowBar
-                },
+                settings.nowBarAppearance,
                 combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
-            ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar), (kg, dozing) ->
+            ) { raw, _, (enabled, kgEnabled), nowBar, (kg, dozing) ->
                 raw.filter { e ->
                     when {
                         kg && nowBar.enabled -> nowBar.shows(e)
-                        kg && e is IslandEvent.Media -> pillEnabled
+                        // Music on the lock screen is controlled solely by Now Bar.
+                        kg && e is IslandEvent.Media -> false
                         !kg && enabled -> settings.isEventEnabled(e)
                         else -> false
                     }
