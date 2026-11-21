@@ -42,7 +42,6 @@ data class AxLockscreenNowBarSettings(
     val flashlight: Boolean = false,
     val buds: Boolean = true,
     val aod: Boolean = true,
-    val chip: Boolean = true,
     val liveApps: Set<String> = emptySet(),
     val pinnedApp: String? = null,
 ) {
@@ -71,7 +70,7 @@ data class AxLockscreenNowBarSettings(
             "now_bar_wave", "now_bar_music", "now_bar_timers", "now_bar_calls",
             "now_bar_live_updates", "now_bar_live_apps", "now_bar_pin", "now_bar_scores",
             "now_bar_recording", "now_bar_charging", "now_bar_flashlight", "now_bar_buds",
-            "now_bar_hide_call", "now_bar_aod", "now_bar_chip",
+            "now_bar_hide_call", "now_bar_aod",
         )
 
         fun read(resolver: ContentResolver, userId: Int): AxLockscreenNowBarSettings {
@@ -111,7 +110,6 @@ data class AxLockscreenNowBarSettings(
                 flashlight = on("now_bar_flashlight", false),
                 buds = on("now_bar_buds", true),
                 aod = on("now_bar_aod", true),
-                chip = on("now_bar_chip", true),
                 liveApps = packages,
                 pinnedApp = Settings.System.getStringForUser(
                     resolver, "now_bar_pin", userId
