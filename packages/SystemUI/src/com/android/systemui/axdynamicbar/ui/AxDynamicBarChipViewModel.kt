@@ -172,6 +172,18 @@ constructor(
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Lazily, "")
 
+    // Driven by the text view's changes, not by polling or an indication queue.
+    // This is separate from the Now Bar activity visibility flow, so showing a
+    // hint cannot accidentally suppress the hint itself.
+    val hasVisibleKeyguardText: StateFlow<Boolean> = callbackFlow<Boolean> {
+        val listener = KeyguardIndicationController.LockScreenTextListener { hasText ->
+            trySend(hasText)
+        }
+        keyguardIndicationController.addLockScreenTextListener(listener)
+        awaitClose { keyguardIndicationController.removeLockScreenTextListener(listener) }
+    }.distinctUntilChanged()
+        .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
     val isOnKeyguard: StateFlow<Boolean> = interactor.isOnKeyguard
 
     val shouldSuppressKeyguardIndication: StateFlow<Boolean> =
@@ -203,18 +215,19 @@ constructor(
             combine(
                 isKeyguardMusicPillEnabled, nowBarAppearance, interactor.isDozing,
             ) { pill, style, dozing -> Triple(pill, style, dozing) },
-            combine(chipState, keyguardBatteryInfo) { state, info ->
-                state to info.isCharging
+            combine(chipState, keyguardBatteryInfo, hasVisibleKeyguardText) {
+                    state, info, hasText ->
+                Triple(state, info.isCharging, hasText)
             },
         ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing),
-                (state, charging) ->
+                (state, charging, hasText) ->
             onKeyguard && if (nowBar.enabled) {
-                // An actual activity uses the regular Now Bar. The independently
-                // enabled Always mode allows a compact icon + percent pill only
-                // while idle; never read Dynamic Bar's battery preference here.
+                // A live activity has priority. Otherwise the Always-mode
+                // compact battery appears ONLY when no keyguard text is shown.
                 !dozing && (state?.allEvents?.any {
                     it !is IslandEvent.Charging || charging
-                } == true || (nowBar.charging && nowBar.batteryMode == 1 && !charging))
+                } == true || (nowBar.charging && nowBar.batteryMode == 1 &&
+                    !charging && !hasText))
             } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
