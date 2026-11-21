@@ -191,9 +191,8 @@ constructor(
             chipState,
         ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing), state ->
             onKeyguard && if (nowBar.enabled) {
-                // The independent Now Bar displays any of its enabled activity types.
-                // On AOD it only appears when the Now Bar's own AOD switch is enabled.
-                state != null && (!dozing || nowBar.aod)
+                // Now Bar is lockscreen-only. Never surface it over AOD/doze.
+                state != null && !dozing
             } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
