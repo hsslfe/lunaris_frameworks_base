@@ -213,6 +213,7 @@ fun AxDynamicBarKeyguardChip(
 ) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
     val isKeyguardChipVisible by viewModel.isKeyguardChipVisible.collectAsStateWithLifecycle()
+    val idleBatteryWakeReady by viewModel.idleBatteryWakeReady.collectAsStateWithLifecycle()
     val hasVisibleKeyguardText by viewModel.hasVisibleKeyguardText.collectAsStateWithLifecycle()
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()
@@ -228,8 +229,8 @@ fun AxDynamicBarKeyguardChip(
         it !is IslandEvent.Charging || batteryInfo.isCharging
     } == true
     val showIdleBatteryOnly = nowBarStyle.enabled && nowBarStyle.charging &&
-        nowBarStyle.batteryMode == 1 && !batteryInfo.isCharging &&
-        !hasNowBarActivity && !hasVisibleKeyguardText
+        nowBarStyle.batteryMode == 1 && idleBatteryWakeReady &&
+        !batteryInfo.isCharging && !hasNowBarActivity && !hasVisibleKeyguardText
 
     val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)

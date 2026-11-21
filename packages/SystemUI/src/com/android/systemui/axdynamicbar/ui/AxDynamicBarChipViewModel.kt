@@ -10,6 +10,7 @@ import com.android.systemui.animation.Expandable
 import com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor
 import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.media.controls.shared.MediaSeekBarStyle
+import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.statusbar.chips.ui.model.OngoingActivityChipModel
 import com.android.systemui.biometrics.AuthController
 import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor
@@ -21,6 +22,7 @@ import com.android.systemui.statusbar.policy.BatteryController
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.map
@@ -61,6 +64,7 @@ constructor(
     @Application private val applicationContext: Context,
     val interactor: AxDynamicBarInteractor,
     batteryInteractor: BatteryInteractor,
+    private val powerInteractor: PowerInteractor,
     private val batteryController: BatteryController,
     authController: AuthController,
     udfpsOverlayInteractor: UdfpsOverlayInteractor,
@@ -209,6 +213,31 @@ constructor(
 
     val isOnKeyguard: StateFlow<Boolean> = interactor.isOnKeyguard
 
+    /**
+     * Only the Now Bar's idle Always-mode battery fallback waits after a screen
+     * wake. Real events stay immediately eligible for the normal entrance
+     * animation. Switching the screen off cancels the pending one-shot delay.
+     */
+    val idleBatteryWakeReady: StateFlow<Boolean> =
+        combine(
+            isOnKeyguard,
+            nowBarAppearance,
+            powerInteractor.isInteractive,
+        ) { onKeyguard, style, interactive ->
+            onKeyguard && interactive && style.enabled && style.charging &&
+                style.batteryMode == 1
+        }.distinctUntilChanged()
+            .flatMapLatest { alwaysModeAwake ->
+                flow {
+                    emit(false)
+                    if (alwaysModeAwake) {
+                        delay(IDLE_BATTERY_WAKE_GRACE_MS)
+                        emit(true)
+                    }
+                }
+            }
+            .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
     val shouldSuppressKeyguardIndication: StateFlow<Boolean> =
         combine(isOnKeyguard, isEnabled, isKeyguardEnabled) { onKeyguard, enabled, keyguardEnabled ->
             onKeyguard && enabled && keyguardEnabled
@@ -238,19 +267,21 @@ constructor(
             combine(nowBarAppearance, interactor.isDozing) { style, dozing ->
                 style to dozing
             },
-            combine(chipState, keyguardBatteryInfo, hasVisibleKeyguardText) {
-                    state, info, hasText ->
-                Triple(state, info.isCharging, hasText)
+            combine(
+                chipState, keyguardBatteryInfo, hasVisibleKeyguardText,
+                idleBatteryWakeReady,
+            ) { state, info, hasText, batteryReady ->
+                Triple(state, info.isCharging, !hasText && batteryReady)
             },
         ) { onKeyguard, enabled, keyguardEnabled, (nowBar, dozing),
-                (state, charging, hasText) ->
+                (state, charging, canShowIdleBattery) ->
             onKeyguard && if (nowBar.enabled) {
                 // A live activity has priority. Otherwise the Always-mode
                 // compact battery appears ONLY when no keyguard text is shown.
                 !dozing && (state?.allEvents?.any {
                     it !is IslandEvent.Charging || charging
                 } == true || (nowBar.charging && nowBar.batteryMode == 1 &&
-                    !charging && !hasText))
+                    !charging && canShowIdleBattery))
             } else {
                 enabled && keyguardEnabled
             }
@@ -335,6 +366,7 @@ constructor(
     }
 
     companion object {
+        private const val IDLE_BATTERY_WAKE_GRACE_MS = 550L
         private const val LOW_UDFPS_THRESHOLD = 0.93f
         private const val NO_OUTSIDE_COLLAPSE = -1L
         private const val SAME_GESTURE_TOLERANCE_MS = 100L
