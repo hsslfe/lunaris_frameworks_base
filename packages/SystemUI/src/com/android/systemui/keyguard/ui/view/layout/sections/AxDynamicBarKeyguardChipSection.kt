@@ -103,8 +103,9 @@ constructor(
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
         val nowBarEnabled = viewModel.nowBarAppearance.value.enabled
-        val nowBarVisible = nowBarEnabled && viewModel.isKeyguardChipVisible.value
-        // Now Bar hides the bottom indications only while it has visible content.
+        val nowBarVisible = nowBarEnabled && viewModel.isNowBarActivityVisible.value
+        // Now Bar hides bottom text only when there is a real live activity.
+        // The optional battery-only fallback must leave lockscreen hints visible.
         // If enabled but empty, restore every standard keyguard hint even when
         // the separately configured Dynamic Bar is enabled.
         indicationController.setSuppressIndication(
@@ -125,14 +126,14 @@ constructor(
                         combine(
                             viewModel.shouldSuppressKeyguardIndication,
                             viewModel.nowBarAppearance,
-                            viewModel.isKeyguardChipVisible,
+                            viewModel.isNowBarActivityVisible,
                         ) { legacySuppress, nowBar, visible ->
                             if (nowBar.enabled) visible else legacySuppress
                         }
                             .distinctUntilChanged()
                             .collect { indicationController.setSuppressIndication(it) }
                     }
-                    combine(viewModel.nowBarAppearance, viewModel.isKeyguardChipVisible) {
+                    combine(viewModel.nowBarAppearance, viewModel.isNowBarActivityVisible) {
                             nowBar, visible -> nowBar.enabled && visible
                         }
                         .distinctUntilChanged()
