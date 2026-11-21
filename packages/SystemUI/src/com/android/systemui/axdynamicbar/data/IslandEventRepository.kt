@@ -135,6 +135,14 @@ constructor(
         if (isTypeEnabled("vpn")) connectivity.startVpn()
         else connectivity.stopVpn()
 
+        // Now Bar shows charging for the entire plug-in session, including when it is
+        // enabled after the charger was already connected. Dynamic Bar keeps its
+        // original brief charging notification when Now Bar charging is disabled.
+        val persistentCharging = isNowBarTypeEnabled("charging")
+        if (system.persistWhilePluggedIn != persistentCharging) {
+            system.stopCharging()
+            system.persistWhilePluggedIn = persistentCharging
+        }
         if (isTypeEnabled("charging")) system.startCharging()
         else system.stopCharging()
         if (isTypeEnabled("ringer")) system.startRinger()
