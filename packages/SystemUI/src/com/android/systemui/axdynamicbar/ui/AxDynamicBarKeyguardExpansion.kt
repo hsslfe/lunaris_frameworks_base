@@ -113,9 +113,6 @@ constructor(
             .onEach { if (!it) collapse() }
             .launchIn(applicationScope)
 
-        interactor.isOnKeyguard
-            .onEach { if (!it) collapse() }
-            .launchIn(applicationScope)
     }
 
     fun expand() {
