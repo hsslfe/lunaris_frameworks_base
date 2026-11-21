@@ -180,21 +180,6 @@ constructor(
         awaitClose { resolver.unregisterContentObserver(observer) }
     }
 
-    /**
-     * Charging speed status for collapsed Now Bar. This uses the existing
-     * keyguard battery notifications and does not poll the battery.
-     * The original Dynamic Bar charging string remains unchanged.
-     */
-    val nowBarChargingSpeedLabel: StateFlow<String> =
-        combine(
-            keyguardBatteryInfo,
-            batteryIndicationTick.onStart { emit(Unit) },
-        ) { info, _ ->
-            if (info.isCharging) keyguardIndicationController.nowBarChargingSpeedLabel else ""
-        }
-            .distinctUntilChanged()
-            .stateIn(applicationScope, SharingStarted.Lazily, "")
-
     val batteryString: StateFlow<String> =
         combine(
             keyguardBatteryInfo,
