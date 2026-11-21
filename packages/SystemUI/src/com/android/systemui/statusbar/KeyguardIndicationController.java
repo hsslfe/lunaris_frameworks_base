@@ -512,6 +512,15 @@ public class KeyguardIndicationController {
         mTopIndicationView = indicationArea.findViewById(R.id.keyguard_indication_text);
         mLockScreenIndicationView = indicationArea.findViewById(
                 R.id.keyguard_indication_text_bottom);
+        // The indication area may be rebound after Now Bar has already hidden
+        // bottom hints. Apply the current suppression to the new text views
+        // before any message or visibility update can make them appear.
+        if (mTopIndicationView != null) {
+            mTopIndicationView.setSuppressVisibility(mSuppressIndication);
+        }
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.setSuppressVisibility(mSuppressIndication);
+        }
         if (Flags.indicationTextA11yFix()) {
             setIndicationColorToThemeColor();
         } else {
