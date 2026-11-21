@@ -144,6 +144,9 @@ private val MusicChipMinWidth = 130.dp
 
 // Scoped to the collapsed pill only. Expanded Lunaris content keeps its own text behavior.
 private val LocalNowBarMarqueeEnabled = compositionLocalOf { true }
+// Null preserves the original Dynamic Bar typography and its compact text cap.
+private val LocalNowBarTextMaxWidth = compositionLocalOf<Dp?> { null }
+private val LocalNowBarTextFontSp = compositionLocalOf<Float?> { null }
 private val MusicActionSize = MusicChipHeight - 16.dp
 private val MusicActionIconSize = MusicChipHeight - 26.dp
 private val MusicPlayPauseSize = MusicChipHeight - 24.dp
@@ -398,7 +401,17 @@ fun AxDynamicBarKeyguardChip(
                         }
                         CompositionLocalProvider(
                             LocalNowBarMarqueeEnabled provides
-                                (!nowBarStyle.enabled || nowBarStyle.scrollText)
+                                (!nowBarStyle.enabled || nowBarStyle.scrollText),
+                            LocalNowBarTextMaxWidth provides
+                                if (nowBarStyle.enabled)
+                                    (nowBarStyle.width - 56).coerceAtLeast(40).dp
+                                else null,
+                            LocalNowBarTextFontSp provides
+                                if (nowBarStyle.enabled)
+                                    (nowBarStyle.height * 0.26f).coerceIn(
+                                        11f, nowBarStyle.textSize.toFloat().coerceAtLeast(11f)
+                                    )
+                                else null,
                         ) {
                             KeyguardChipBody(
                                 event = event,
@@ -489,6 +502,18 @@ private fun KeyguardChipBody(
     val styledWidth = nowBarStyle?.width?.coerceIn(120, availableWidthDp)?.dp
     val chipWidthModifier = if (styledWidth != null) Modifier.width(styledWidth)
         else Modifier.widthIn(min = dynamicMinWidth, max = 180.dp)
+    // The real pill width limits text, while fixed icons and optional buttons
+    // retain their space. Dynamic Bar continues using its original sizing.
+    val nowBarActionSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.44f).coerceIn(20f, 32f).dp else ActionSize
+    val nowBarActionIconSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.26f).coerceIn(13f, 20f).dp else ActionIconSize
+    val actionCount = if (nowBarStyle != null && !isMedia)
+        actionsFor(event, context).size else 0
+    val nowBarTextMaxWidth = if (styledWidth != null)
+        (styledWidth - 48.dp - actionCount * (nowBarActionSize + SpaceXs + SpaceXxs))
+            .coerceAtLeast(32.dp)
+        else 110.dp
     val styledShape = if (nowBarStyle != null)
         RoundedCornerShape((nowBarStyle.height * nowBarStyle.corners / 200f).dp)
         else ChipShape
@@ -581,8 +606,34 @@ private fun KeyguardChipBody(
                 )
                 .padding(start = if (isMedia) SpaceMd else SpaceSm, end = SpaceMd),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (nowBarStyle != null) Arrangement.Center else Arrangement.Start,
         ) {
-            if (event is IslandEvent.Media) {
+            if (nowBarStyle != null && event is IslandEvent.Charging) {
+                // Center the charging icon and its text together. Both use the
+                // measured space within the pill; neither keeps the old 110dp cap.
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
+                    val textWidth = (maxWidth - iconSize - SpaceXs).coerceAtLeast(40.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        AnimatedChargingBoltIcon(styledContentColor, iconSize)
+                        Spacer(Modifier.width(SpaceXs))
+                        NowBarResponsiveChargingText(
+                            event = event,
+                            batteryString = batteryString,
+                            color = styledContentColor,
+                            heightDp = nowBarStyle.height,
+                            availableWidth = textWidth,
+                            modifier = Modifier.widthIn(max = textWidth),
+                        )
+                    }
+                }
+            } else if (event is IslandEvent.Media) {
                 if (nowBarStyle?.art != 3) {
                 AnimatedContent(
                     targetState = event.albumArt,
@@ -627,7 +678,7 @@ private fun KeyguardChipBody(
                     Column(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.widthIn(max = 110.dp).fillMaxWidth(),
+                        modifier = Modifier.widthIn(max = nowBarTextMaxWidth).fillMaxWidth(),
                     ) {
                         Text(
                             if (nowBarStyle?.text == 0)
@@ -754,23 +805,15 @@ private fun KeyguardChipBody(
                     },
                     contentKey = { textKeyFor(it) },
                     label = "kg_chip_text",
-                    modifier = Modifier.weight(
-                        1f,
-                        fill = nowBarStyle != null && event is IslandEvent.Charging,
-                    ),
+                    modifier = Modifier.weight(1f, fill = false),
                 ) { ev ->
-                    if (nowBarStyle != null && ev is IslandEvent.Charging) {
-                        NowBarResponsiveChargingText(
-                            event = ev,
-                            batteryString = batteryString,
-                            color = styledContentColor,
-                            heightDp = nowBarStyle.height,
-                            modifier = Modifier.fillMaxWidth(),
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        KeyguardPrimaryText(
+                            ev, styledContentColor,
+                            Modifier.weight(1f, fill = false).widthIn(max = nowBarTextMaxWidth),
+                            batteryString,
                         )
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            KeyguardPrimaryText(ev, styledContentColor, Modifier.weight(1f, fill = false).widthIn(max = 110.dp), batteryString)
-                            val secondary = secondaryTextFor(ev)
+                        val secondary = secondaryTextFor(ev)
                             if (secondary != null) {
                                 Text(
                                     " · ",
@@ -783,18 +826,21 @@ private fun KeyguardChipBody(
                                     color = styledContentColor.copy(alpha = AlphaSecondary),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 60.dp).then(
+                                    modifier = Modifier.widthIn(
+                                        max = if (nowBarStyle != null)
+                                            (nowBarTextMaxWidth * 0.45f).coerceAtLeast(32.dp)
+                                        else 60.dp,
+                                    ).then(
                                         if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
                                         else Modifier
                                     ),
                                 )
                             }
                         }
-                    }
                 }
             }
 
-            if (event !is IslandEvent.Media) {
+            if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
                 val actionsCtx = LocalContext.current
                 val actions = actionsFor(event, actionsCtx)
                 if (actions.isNotEmpty()) {
@@ -806,8 +852,8 @@ private fun KeyguardChipBody(
                             color = styledContentColor,
                             bgColor = accent.copy(alpha = 0.5f),
                             onClick = { action.perform(viewModel, event, context) },
-                            size = ActionSize,
-                            iconSize = ActionIconSize,
+                            size = nowBarActionSize,
+                            iconSize = nowBarActionIconSize,
                         )
                     }
                 }
