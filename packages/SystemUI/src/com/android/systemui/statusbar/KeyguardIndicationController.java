@@ -633,52 +633,6 @@ public class KeyguardIndicationController {
         return computePowerChargingStringIndication();
     }
 
-    /**
-     * Short, localized charging status for collapsed Now Bar only. Unlike
-     * computePowerChargingStringIndication(), this has no percentage or ETA;
-     * the separate second row can use all available width for battery metrics.
-     */
-    public String getNowBarChargingSpeedLabel() {
-        final int labelRes;
-        if (mPowerCharged) {
-            return mContext.getString(R.string.keyguard_charged);
-        } else if (mPowerPluggedInWireless) {
-            labelRes = R.string.keyguard_plugged_in_wireless;
-        } else if (mPowerPluggedInDock) {
-            labelRes = R.string.keyguard_plugged_in_dock;
-        } else if (mPowerPluggedInWired) {
-            if (mChargingSpeed == BatteryStatus.CHARGING_OEM) {
-                labelRes = R.string.keyguard_plugged_in_turbo_charging;
-            } else if (mChargingSpeed == BatteryStatus.CHARGING_FAST) {
-                labelRes = R.string.keyguard_plugged_in_charging_fast;
-            } else if (mChargingSpeed == BatteryStatus.CHARGING_SLOWLY) {
-                labelRes = R.string.keyguard_plugged_in_charging_slowly;
-            } else {
-                // Some devices expose only a generic speed category, even
-                // when the battery controller reports useful charging watts.
-                // Use that already-reported value as a fallback rather than
-                // always showing the uninformative "Charging" label.
-                final float watts = mCurrentDivider > 0
-                        ? mChargingWattage / mCurrentDivider / 1000f : 0f;
-                if (watts >= 10f) {
-                    labelRes = R.string.keyguard_plugged_in_charging_fast;
-                } else if (watts > 0f && watts < 5f) {
-                    labelRes = R.string.keyguard_plugged_in_charging_slowly;
-                } else {
-                    labelRes = R.string.keyguard_plugged_in;
-                }
-            }
-        } else {
-            labelRes = R.string.keyguard_plugged_in;
-        }
-        // Match the existing localized SystemUI labels, removing only the
-        // dummy percentage placeholder; avoid hardcoded English strings.
-        return mContext.getString(labelRes, "0%")
-                .replace("0%", "")
-                .replace("•", " ")
-                .replaceAll("\\s{2,}", " ")
-                .trim();
-    }
 
     private void handleAlignStateChanged(int alignState) {
         String alignmentIndication = "";
