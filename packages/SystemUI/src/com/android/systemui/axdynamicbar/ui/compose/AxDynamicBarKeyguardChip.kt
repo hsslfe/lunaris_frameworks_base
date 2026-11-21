@@ -510,10 +510,11 @@ private fun KeyguardChipBody(
         (nowBarStyle.height * 0.26f).coerceIn(13f, 20f).dp else ActionIconSize
     val actionCount = if (nowBarStyle != null && !isMedia)
         actionsFor(event, context).size else 0
-    val nowBarTextMaxWidth = if (styledWidth != null)
-        (styledWidth - 48.dp - actionCount * (nowBarActionSize + SpaceXs + SpaceXxs))
-            .coerceAtLeast(32.dp)
-        else 110.dp
+    val nowBarTextMaxWidth = if (styledWidth != null) {
+        val actionsWidthDp = actionCount *
+            (nowBarActionSize.value + SpaceXs.value + SpaceXxs.value)
+        (styledWidth.value - 48f - actionsWidthDp).coerceAtLeast(32f).dp
+    } else 110.dp
     val styledShape = if (nowBarStyle != null)
         RoundedCornerShape((nowBarStyle.height * nowBarStyle.corners / 200f).dp)
         else ChipShape
@@ -547,6 +548,15 @@ private fun KeyguardChipBody(
     }
     val styledArtworkSize = if (nowBarStyle != null)
         (nowBarStyle.height - 16).coerceIn(30, 78).dp else MusicActionSize
+    val mediaButtonSize = if (nowBarStyle != null)
+        (nowBarStyle.height - 24).coerceIn(24, 48).dp else MusicPlayPauseSize
+    val mediaButtonIconSize = if (nowBarStyle != null)
+        (mediaButtonSize.value - 9f).coerceIn(14f, 30f).dp
+        else MusicPlayPauseIconSize
+    val skipButtonIconSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.42f).coerceIn(18f, 28f).dp else 24.dp
+    val sportsBadgeSize = if (nowBarStyle != null)
+        (nowBarStyle.height * 0.40f).coerceIn(18f, 32f).dp else ChipIconSize
     val styledArtShape = when (nowBarStyle?.art) {
         1 -> RoundedCornerShape(10.dp)
         2 -> RoundedCornerShape(3.dp)
@@ -684,7 +694,10 @@ private fun KeyguardChipBody(
                             if (nowBarStyle?.text == 0)
                                 listOf(ev.track, ev.artist).filter { it.isNotBlank() }.joinToString(" · ")
                             else ev.track.ifEmpty { stringResource(R.string.ax_dynamic_bar_music) },
-                            style = PillPrimary.copy(fontSize = (nowBarStyle?.textSize ?: 13).sp),
+                            style = PillPrimary.copy(
+                                fontSize = (LocalNowBarTextFontSp.current
+                                    ?: (nowBarStyle?.textSize ?: 13).toFloat()).sp,
+                            ),
                             color = styledContentColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -699,7 +712,8 @@ private fun KeyguardChipBody(
                             Text(
                                 ev.artist,
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = ((nowBarStyle?.textSize ?: 13) - 1).sp),
+                                    fontSize = ((LocalNowBarTextFontSp.current
+                                        ?: (nowBarStyle?.textSize ?: 13).toFloat()) - 1f).sp),
                                 color = styledContentColor.copy(alpha = AlphaSecondary),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -715,19 +729,17 @@ private fun KeyguardChipBody(
                         Icons.Filled.SkipPrevious,
                         contentDescription = "Previous",
                         tint = styledContentColor,
-                        modifier = Modifier.size(24.dp).clickable { viewModel.skipPrev() },
+                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipPrev() },
                     )
                 }
                 if (nowBarStyle == null || nowBarStyle.buttons != 2) {
                 Surface(
                     onClick = { viewModel.togglePlayPause() },
-                    modifier = Modifier.size(
-                        if (nowBarStyle != null) (nowBarStyle.height - 24).coerceIn(24, 48).dp
-                        else MusicPlayPauseSize),
+                    modifier = Modifier.size(mediaButtonSize),
                     shape = CircleShape,
                     color = lerp(accent, styledContentColor, AlphaSubtle).copy(alpha = 0.4f),
                 ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(MusicPlayPauseSize)) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(mediaButtonSize)) {
                         Icon(
                             if (event.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             contentDescription = stringResource(
@@ -735,7 +747,7 @@ private fun KeyguardChipBody(
                                 else R.string.ax_dynamic_bar_play,
                             ),
                             tint = styledContentColor,
-                            modifier = Modifier.size(MusicPlayPauseIconSize),
+                            modifier = Modifier.size(mediaButtonIconSize),
                         )
                     }
                 }
@@ -745,7 +757,7 @@ private fun KeyguardChipBody(
                         Icons.Filled.SkipNext,
                         contentDescription = "Next",
                         tint = styledContentColor,
-                        modifier = Modifier.size(24.dp).clickable { viewModel.skipNext() },
+                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipNext() },
                     )
                 }
                 if (nowBarStyle?.wave == true && event.isPlaying && !isDozing) {
@@ -767,17 +779,19 @@ private fun KeyguardChipBody(
                     }
                 }
             } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
-                SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor)
+                SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
                 Spacer(Modifier.width(SpaceXs))
                 Text(
                     if (event.score1.isNotEmpty()) "${event.score1} - ${event.score2}"
                         else stringResource(R.string.ax_dynamic_bar_sports_vs),
-                    style = PillPrimary,
+                    style = if (nowBarStyle != null)
+                        PillPrimary.copy(fontSize = (LocalNowBarTextFontSp.current ?: 13f).sp)
+                        else PillPrimary,
                     color = styledContentColor,
                     maxLines = 1,
                 )
                 Spacer(Modifier.width(SpaceXs))
-                SportsChipTeamBadge(event.team2Name, event.team2Icon, styledContentColor)
+                SportsChipTeamBadge(event.team2Name, event.team2Icon, styledContentColor, sportsBadgeSize)
             } else {
                 AnimatedContent(
                     targetState = event,
@@ -1485,17 +1499,22 @@ private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideC
 }
 
 @Composable
-private fun SportsChipTeamBadge(name: String, icon: Drawable?, contentColor: Color) {
+private fun SportsChipTeamBadge(
+    name: String,
+    icon: Drawable?,
+    contentColor: Color,
+    iconSize: Dp = ChipIconSize,
+) {
     if (icon != null) {
         Image(
-            bitmap = icon.toScaledBitmap(ChipIconSize),
+            bitmap = icon.toScaledBitmap(iconSize),
             contentDescription = name,
-            modifier = Modifier.size(ChipIconSize).clip(CircleShape),
+            modifier = Modifier.size(iconSize).clip(CircleShape),
             contentScale = ContentScale.Crop,
         )
     } else {
         Box(
-            modifier = Modifier.size(ChipIconSize).clip(CircleShape)
+            modifier = Modifier.size(iconSize).clip(CircleShape)
                 .background(contentColor.copy(alpha = AlphaIconBg)),
             contentAlignment = Alignment.Center,
         ) {
