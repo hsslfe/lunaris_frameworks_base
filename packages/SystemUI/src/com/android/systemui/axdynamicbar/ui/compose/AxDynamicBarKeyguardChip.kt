@@ -216,7 +216,6 @@ fun AxDynamicBarKeyguardChip(
     val hasVisibleKeyguardText by viewModel.hasVisibleKeyguardText.collectAsStateWithLifecycle()
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()
-    val isKeyguardMusicPillEnabled by viewModel.isKeyguardMusicPillEnabled.collectAsStateWithLifecycle()
     val nowBarStyle by viewModel.nowBarAppearance.collectAsStateWithLifecycle()
     val isDozing by viewModel.interactor.isDozing.collectAsStateWithLifecycle()
     val keyguardBatteryChipMode by viewModel.keyguardBatteryChipMode.collectAsStateWithLifecycle()
@@ -359,10 +358,7 @@ fun AxDynamicBarKeyguardChip(
                             chipState.event is IslandEvent.Charging && !batteryInfo.isCharging
                         ) chipState.allEvents.firstOrNull { it !is IslandEvent.Charging }
                           else chipState.event
-                        !isKeyguardDynamicBarEnabled -> chipState.allEvents.firstOrNull {
-                            isKeyguardMusicPillEnabled && it is IslandEvent.Media
-                        }
-                        isKeyguardMusicPillEnabled -> rawEvent
+                        !isKeyguardDynamicBarEnabled -> null
                         rawEvent is com.android.systemui.islandevents.model.IslandEvent.Media -> {
                             chipState.allEvents.firstOrNull { it !is com.android.systemui.islandevents.model.IslandEvent.Media }
                         }
@@ -425,9 +421,9 @@ fun AxDynamicBarKeyguardChip(
                         defaultMinSize = false,
                     ) { expandable ->
                         val keyguardEventCount = remember(
-                            chipState.allEvents, isKeyguardMusicPillEnabled, nowBarStyle.enabled,
+                            chipState.allEvents, nowBarStyle.enabled,
                         ) {
-                            if (nowBarStyle.enabled || isKeyguardMusicPillEnabled)
+                            if (nowBarStyle.enabled)
                                 chipState.eventCount
                             else chipState.allEvents.count { it !is IslandEvent.Media }
                         }
