@@ -222,7 +222,6 @@ fun AxDynamicBarKeyguardChip(
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
-    val chargingSpeedLabel by viewModel.nowBarChargingSpeedLabel.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
     val hasNowBarActivity = state?.allEvents?.any {
         it !is IslandEvent.Charging || batteryInfo.isCharging
@@ -454,7 +453,6 @@ fun AxDynamicBarKeyguardChip(
                                 nowBarStyle = nowBarStyle.takeIf { it.enabled },
                                 isDozing = isDozing,
                                 batteryString = batteryString,
-                                chargingSpeedLabel = chargingSpeedLabel,
                                 aospChipExpandable = expandable,
                             )
                         }
@@ -485,7 +483,6 @@ private fun KeyguardChipBody(
     nowBarStyle: AxLockscreenNowBarSettings? = null,
     isDozing: Boolean = false,
     batteryString: String = "",
-    chargingSpeedLabel: String = "",
     aospChipExpandable: SystemUiExpandable,
 ) {
     val context = LocalContext.current
@@ -671,7 +668,6 @@ private fun KeyguardChipBody(
                         NowBarResponsiveChargingText(
                             event = event,
                             batteryString = batteryString,
-                            chargingSpeedLabel = chargingSpeedLabel,
                             color = styledContentColor,
                             heightDp = nowBarStyle.height,
                             availableWidth = textWidth,
@@ -1248,55 +1244,27 @@ private fun AnimatedBatteryFillIcon(level: Int, color: Color, iconSize: Dp = Bat
 private fun NowBarResponsiveChargingText(
     event: IslandEvent.Charging,
     batteryString: String,
-    chargingSpeedLabel: String,
     color: Color,
     heightDp: Int,
     availableWidth: Dp,
     modifier: Modifier = Modifier,
 ) {
-    val parts = rememberChargingParts(batteryString)
-    val defaultChargingLabel = stringResource(R.string.ax_dynamic_bar_charging)
-    val chargingMessage = parts.firstOrNull().orEmpty()
-    // The OS already supplies the localized charging-speed category. Remove
-    // the percentage/time suffix; don't make it oversized in a narrow pill.
-    val speedLabel = chargingSpeedLabel.takeIf { it.isNotBlank() }
-        ?: remember(chargingMessage, defaultChargingLabel) {
-            chargingMessage
-                .replace(Regex("""[\d.,]+\s*%"""), "")
-                .substringBefore(" · ")
-                .substringBefore("•")
-                .substringBefore(",")
-                .trim(' ', '·', '(', ')', '-', '–')
-                .ifBlank { defaultChargingLabel }
-        }
-    // LOCKSCREEN_BATTERY_INFO controls whether the controller appends
-    // actual reported amps, watts, volts and temperature. Retain them all.
-    val detailItems = remember(parts) {
-        parts.drop(1).flatMap { it.split(" · ") }
-            .map { it.trim() }.filter { it.isNotEmpty() }
-    }
-    val detailText = detailItems.joinToString(" · ")
+    // Display the same unmodified charging indication as the normal lockscreen:
+    // first line: battery percentage and Android's charging-speed phrase;
+    // second line (if enabled): real current, wattage, voltage, temperature.
+    val lines = rememberChargingParts(batteryString)
+    val mainText = lines.firstOrNull() ?: "${event.level}%"
+    val details = lines.drop(1).joinToString(" · ")
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
-    val availableTextDp = availableWidth.value.coerceAtLeast(32f)
-    // Fit "Charging slowly", "Charging rapidly" etc. to the measured width
-    // and selected height, including the smallest 48dp pill.
-    val heightFontSp = (heightDp * 0.22f).coerceIn(9f, 14f)
-    val widthFontSp = (availableTextDp / (speedLabel.length.coerceAtLeast(1) * 0.51f))
-        .coerceAtLeast(9f)
-    val primaryFontSp = minOf(heightFontSp, widthFontSp)
-    val detailFontSp = (heightDp * 0.17f).coerceIn(9f, 11f)
-    val rotateDetails = detailItems.size > 1 &&
-        detailText.length * detailFontSp * 0.51f > availableTextDp
-    var detailIndex by remember(detailItems, rotateDetails) { mutableIntStateOf(0) }
-    LaunchedEffect(detailItems, rotateDetails) {
-        if (rotateDetails) {
-            while (true) {
-                delay(2300L)
-                detailIndex = (detailIndex + 1) % detailItems.size
-            }
-        }
-    }
-    val visibleDetails = if (rotateDetails) detailItems[detailIndex] else detailText
+    val freeWidth = availableWidth.value.coerceAtLeast(24f)
+
+    // Change appearance only, never the underlying text or measurements.
+    val titleHeightSp = (heightDp * 0.24f).coerceIn(10f, 14f)
+    val titleWidthSp = freeWidth / (mainText.length.coerceAtLeast(1) * 0.53f)
+    val titleFontSp = minOf(titleHeightSp, titleWidthSp.coerceAtLeast(9f))
+    val detailHeightSp = (heightDp * 0.19f).coerceIn(9f, 12f)
+    val detailWidthSp = freeWidth / (details.length.coerceAtLeast(1) * 0.52f)
+    val detailFontSp = minOf(detailHeightSp, detailWidthSp.coerceAtLeast(9f))
 
     Column(
         modifier = modifier,
@@ -1304,8 +1272,8 @@ private fun NowBarResponsiveChargingText(
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
-            text = speedLabel,
-            style = PillPrimary.copy(fontSize = primaryFontSp.sp),
+            text = mainText,
+            style = PillPrimary.copy(fontSize = titleFontSp.sp),
             color = color,
             maxLines = 1,
             overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
@@ -1314,18 +1282,17 @@ private fun NowBarResponsiveChargingText(
                 if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
             ),
         )
-        if (detailItems.isNotEmpty()) {
-            // Always render the measurement line if system battery information
-            // is enabled. At narrow widths rotate individual readings instead
-            // of clipping wattage or temperature; no new background polling.
+        if (details.isNotEmpty()) {
             Text(
-                text = visibleDetails,
+                text = details,
                 style = PillPrimary.copy(fontSize = detailFontSp.sp),
                 color = color.copy(alpha = AlphaSecondary),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
                 textAlign = TextAlign.Start,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().then(
+                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
+                ),
             )
         }
     }
