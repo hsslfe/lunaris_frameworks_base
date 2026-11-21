@@ -40,6 +40,9 @@ data class AxLockscreenNowBarSettings(
     val scores: Boolean = true,
     val recording: Boolean = true,
     val charging: Boolean = false,
+    // Now Bar-only charging display: 0 = while charging, 1 = always.
+    // When idle in Always mode, the compact battery pill is not an activity.
+    val batteryMode: Int = 0,
     val flashlight: Boolean = false,
     val buds: Boolean = true,
     val liveApps: Set<String> = emptySet(),
@@ -68,7 +71,8 @@ data class AxLockscreenNowBarSettings(
             "now_bar_art", "now_bar_buttons", "now_bar_text", "now_bar_text_size",
             "now_bar_scroll_text", "now_bar_wave", "now_bar_music", "now_bar_timers", "now_bar_calls",
             "now_bar_live_updates", "now_bar_live_apps", "now_bar_scores",
-            "now_bar_recording", "now_bar_charging", "now_bar_flashlight", "now_bar_buds",
+            "now_bar_recording", "now_bar_charging", "now_bar_battery_mode",
+            "now_bar_flashlight", "now_bar_buds",
             "now_bar_hide_call",
         )
 
@@ -114,6 +118,7 @@ data class AxLockscreenNowBarSettings(
                 scores = on("now_bar_scores", true),
                 recording = on("now_bar_recording", true),
                 charging = on("now_bar_charging", false),
+                batteryMode = value("now_bar_battery_mode", 0).coerceIn(0, 1),
                 flashlight = on("now_bar_flashlight", false),
                 buds = on("now_bar_buds", true),
                 liveApps = packages,
