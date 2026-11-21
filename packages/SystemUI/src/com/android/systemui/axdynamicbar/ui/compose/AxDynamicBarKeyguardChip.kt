@@ -243,7 +243,15 @@ fun AxDynamicBarKeyguardChip(
             lastExpandedState = state
         }
         val expandedVisibleState = remember { MutableTransitionState(false) }
-        expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded && state != null
+        expandedVisibleState.targetState =
+            if (nowBarStyle.enabled) {
+                // A track switch can briefly remove the media event. Keep the
+                // expanded content showing its last frame until the expansion
+                // controller's short media-gap grace period completes.
+                isKeyguardExpanded && (state != null || lastExpandedState != null)
+            } else {
+                isKeyguardChipVisible && isKeyguardExpanded && state != null
+            }
         LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
             if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
                 lastExpandedState = null
@@ -261,8 +269,9 @@ fun AxDynamicBarKeyguardChip(
                 .fillMaxWidth()
                 .align(Alignment.Center),
         ) {
-            val expandedContentState = if (expandedVisibleState.targetState) state
-                else lastExpandedState
+            val expandedContentState = if (nowBarStyle.enabled) {
+                state ?: lastExpandedState
+            } else if (expandedVisibleState.targetState) state else lastExpandedState
             expandedContentState?.let {
                 // Retain the last expanded content only until the animation
                 // completes. Original Lunaris expanded UI remains unchanged.
@@ -277,7 +286,11 @@ fun AxDynamicBarKeyguardChip(
         }
 
         AnimatedVisibility(
-            visible = isKeyguardChipVisible && !isKeyguardExpanded,
+            visible = isKeyguardChipVisible && !isKeyguardExpanded &&
+                (!nowBarStyle.enabled ||
+                    (expandedVisibleState.isIdle && !expandedVisibleState.currentState)),
+            // Avoid showing the collapsed pill under a still-fading expanded
+            // panel; show it only after the expanded exit has settled.
             // The idle battery pill instantly yields to an indication and
             // reappears as soon as its text clears. Real activity animations
             // remain unchanged.
