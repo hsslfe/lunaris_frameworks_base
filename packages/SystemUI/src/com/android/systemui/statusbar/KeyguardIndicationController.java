@@ -223,6 +223,7 @@ public class KeyguardIndicationController {
     private ColorStateList mInitialTextColorState;
     private boolean mVisible;
     private boolean mSuppressIndication;
+    private boolean mSuppressNowBarIndications;
     private boolean mOrganizationOwnedDevice;
 
     // these all assume the device is plugged in (wired/wireless/docked) AND chargingOrFull:
@@ -744,13 +745,18 @@ public class KeyguardIndicationController {
             }
 
             mKeyguardLogger.logUpdateBatteryIndication(powerIndication, mPowerPluggedIn);
-            mRotateTextViewController.updateIndication(
-                    INDICATION_TYPE_BATTERY,
-                    new KeyguardIndication.Builder()
-                            .setMessage(powerIndication)
-                            .setTextColor(getInitialTextColorState())
-                            .build(),
-                    animate);
+            if (mSuppressNowBarIndications && !mEnableBatteryDefender && !mIncompatibleCharger) {
+                mRotateTextViewController.hideIndication(INDICATION_TYPE_BATTERY);
+            } else {
+                mRotateTextViewController.updateIndication(
+                        INDICATION_TYPE_BATTERY,
+                        new KeyguardIndication.Builder()
+                                .setMessage(powerIndication)
+                                .setTextColor(getInitialTextColorState())
+                                .build(),
+                        animate);
+            }
+            // Keep charging information available to Now Bar and other consumers.
             notifyIndicationListeners(AX_TYPE_BATTERY, powerIndication);
         } else {
             mKeyguardLogger.log(TAG, LogLevel.DEBUG, "hide battery indication");
@@ -1003,6 +1009,21 @@ public class KeyguardIndicationController {
         return UserHandle.USER_NULL;
     }
 
+    /** Suppress only redundant charging text and the shortcut hint while Now Bar is visible. */
+    public void setSuppressNowBarIndications(boolean suppress) {
+        if (mSuppressNowBarIndications == suppress) {
+            return;
+        }
+        mSuppressNowBarIndications = suppress;
+        if (suppress && TextUtils.equals(mTransientIndication,
+                mContext.getString(R.string.keyguard_affordance_press_too_short))) {
+            hideTransientIndication();
+        }
+        if (mVisible && mRotateTextViewController != null) {
+            updateDeviceEntryIndication(false);
+        }
+    }
+
     public void setSuppressIndication(boolean suppress) {
         mSuppressIndication = suppress;
         if (mTopIndicationView != null) {
@@ -1089,6 +1110,10 @@ public class KeyguardIndicationController {
      * Shows {@param transientIndication} until it is hidden by {@link #hideTransientIndication}.
      */
     public void showTransientIndication(int transientIndication) {
+        if (mSuppressNowBarIndications
+                && transientIndication == R.string.keyguard_affordance_press_too_short) {
+            return;
+        }
         showTransientIndication(mContext.getResources().getString(transientIndication));
     }
 
@@ -1269,7 +1294,10 @@ public class KeyguardIndicationController {
                 mIndicationArea.setVisibility(GONE);
                 return;
             } else if (mPowerPluggedIn || mEnableBatteryDefender) {
-                newIndication = computePowerIndication();
+                if (!mSuppressNowBarIndications || mEnableBatteryDefender
+                        || mIncompatibleCharger) {
+                    newIndication = computePowerIndication();
+                }
             } else {
                 String batteryLevel = NumberFormat.getPercentInstance().format(mBatteryLevel / 100f);
                 String batteryTemp = com.android.internal.util.lunaris.ThemeUtils.batteryTemperature(mContext, false);
