@@ -671,15 +671,18 @@ final class MistDropHeadsUpAnimator {
             d.setShape(blob, radius, bulgeTop, bulgeBottom, 0f);
             d.tip = capsuleH * 0.45f * bell(t, A_TIP_START, A_TIP_END);
 
+            // Match Glossy's reveal and liquid-shell timing in every style.
+            // Keep each style's existing material, rim and glow rendering.
+            final float revealAlpha = progress(t, A_REVEAL_START, A_REVEAL_ALPHA_END,
+                    Interpolators.LINEAR_OUT_SLOW_IN);
             float glassIn = progress(t, A_IMPACT, A_GLASS_IN_END, Interpolators.FAST_OUT_SLOW_IN);
             float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
                     Interpolators.FAST_OUT_SLOW_IN);
+            d.inkAlpha = glassOut;
             if (style == STYLE_GLOSSY) {
-                d.inkAlpha = glassOut;
                 d.shineSweep = progress(t, A_IMPACT, A_GLASS_OUT_START,
                         Interpolators.FAST_OUT_SLOW_IN);
             } else {
-                d.inkAlpha = 1f - glassIn;
                 d.glassAlpha = glassIn * glassOut;
                 d.rimAlpha = glassIn * glassOut;
             }
@@ -719,8 +722,6 @@ final class MistDropHeadsUpAnimator {
                 }
             }
 
-            float revealAlpha = progress(t, A_REVEAL_START, A_REVEAL_ALPHA_END,
-                    Interpolators.LINEAR_OUT_SLOW_IN);
             float blur = dp(20f) * (1f - progress(t, A_REVEAL_START, A_REVEAL_BLUR_END,
                     Interpolators.FAST_OUT_SLOW_IN));
             transformRow(blob, revealAlpha, blur);
