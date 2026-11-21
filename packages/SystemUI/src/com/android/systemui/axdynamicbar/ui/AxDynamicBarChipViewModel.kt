@@ -191,8 +191,10 @@ constructor(
             chipState,
         ) { onKeyguard, enabled, keyguardEnabled, (pillEnabled, nowBar, dozing), state ->
             onKeyguard && if (nowBar.enabled) {
-                // Now Bar is lockscreen-only. Never surface it over AOD/doze.
-                state != null && !dozing
+                // Now Bar must have a real lockscreen activity before the pill
+                // (or the bottom indication suppression) can become visible.
+                // A pending notification alert alone does not count as Now Bar content.
+                state?.allEvents?.isNotEmpty() == true && !dozing
             } else {
                 (enabled && keyguardEnabled) ||
                     (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
