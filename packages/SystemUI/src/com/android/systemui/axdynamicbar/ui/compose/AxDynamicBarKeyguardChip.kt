@@ -114,6 +114,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -122,6 +123,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -648,18 +650,46 @@ private fun KeyguardChipBody(
             horizontalArrangement = if (nowBarStyle != null) Arrangement.Center else Arrangement.Start,
         ) {
             if (nowBarStyle != null && event is IslandEvent.Charging) {
-                // Charging is a leading-icon layout, unlike the other centered
-                // Now Bar activities. Keep the bolt at the left inset and give
-                // its adjacent text ALL the remaining width.
+                // Use the exact width of Android's native charging text.
+                // Center the whole icon + text group if it fits; otherwise the
+                // bolt remains at the left inset and text gets all remaining space.
                 BoxWithConstraints(
                     modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.CenterStart,
+                    contentAlignment = Alignment.Center,
                 ) {
                     val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
                     val iconGap = SpaceXs
                     val textWidth = (maxWidth - iconSize - iconGap).coerceAtLeast(32.dp)
+                    val chargingLines = rememberChargingParts(batteryString)
+                    val title = chargingLines.firstOrNull() ?: "${event.level}%"
+                    val metrics = chargingLines.drop(1).joinToString(" · ")
+                    val textMeasurer = rememberTextMeasurer()
+                    val density = LocalDensity.current
+                    val requiredTextWidthPx = remember(
+                        title, metrics, nowBarStyle.height, textMeasurer,
+                    ) {
+                        val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
+                        val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
+                        maxOf(
+                            textMeasurer.measure(
+                                text = title,
+                                style = PillPrimary.copy(fontSize = titleSize.sp),
+                                maxLines = 1,
+                            ).size.width,
+                            if (metrics.isNotEmpty()) textMeasurer.measure(
+                                text = metrics,
+                                style = PillPrimary.copy(fontSize = detailSize.sp),
+                                maxLines = 1,
+                            ).size.width else 0,
+                        )
+                    }
+                    val requiredTextWidth = with(density) {
+                        (requiredTextWidthPx + 4).toDp()
+                    }
+                    val groupWidth = minOf(maxWidth,
+                        iconSize + iconGap + requiredTextWidth.coerceAtLeast(32.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.width(groupWidth),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Start,
                     ) {
@@ -677,8 +707,10 @@ private fun KeyguardChipBody(
                 }
             } else if (event is IslandEvent.Media) {
                 if (nowBarStyle?.art != 3) {
+                val stableArtwork = if (nowBarStyle != null)
+                    rememberKeyguardMediaArtwork(event).drawable else event.albumArt
                 AnimatedContent(
-                    targetState = event.albumArt,
+                    targetState = stableArtwork,
                     transitionSpec = {
                         (fadeIn(motionScheme.defaultEffectsSpec()) +
                             scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
