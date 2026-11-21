@@ -371,6 +371,7 @@ fun AxDynamicBarKeyguardChip(
                             contentColor = contentColor,
                             progress = progress,
                             eventCount = keyguardEventCount,
+                            selectedEventIndex = chipState.pinnedIndex,
                             viewModel = viewModel,
                             nowBarStyle = nowBarStyle.takeIf { it.enabled },
                             isDozing = isDozing,
@@ -399,6 +400,7 @@ private fun KeyguardChipBody(
     contentColor: Color,
     progress: Float?,
     eventCount: Int,
+    selectedEventIndex: Int,
     viewModel: AxDynamicBarChipViewModel,
     nowBarStyle: AxLockscreenNowBarSettings? = null,
     isDozing: Boolean = false,
@@ -755,10 +757,9 @@ private fun KeyguardChipBody(
                 }
             }
 
-            if (eventCount > 1 && (
-                (nowBarStyle == null && event !is IslandEvent.Media) ||
-                (nowBarStyle?.more == 1 && !isDozing)
-            )) {
+            // The original Dynamic Bar retains its compact right-side count badge.
+            // Now Bar's dots are overlaid at the bottom, without consuming width.
+            if (nowBarStyle == null && eventCount > 1 && event !is IslandEvent.Media) {
                 Spacer(Modifier.width(SpaceXs))
                 Box(
                     contentAlignment = Alignment.Center,
@@ -769,10 +770,38 @@ private fun KeyguardChipBody(
                         .padding(horizontal = SpaceXxs),
                 ) {
                     Text(
-                        if (nowBarStyle != null) "••" else "$eventCount",
+                        "$eventCount",
                         style = TsBadge,
                         color = styledContentColor,
                         maxLines = 1,
+                    )
+                }
+            }
+        }
+        if (nowBarStyle?.more == 1 && eventCount > 1 && !isDozing) {
+            // Center the activity indicators just above the lower pill outline,
+            // inside the collapsed Now Bar. This is not a right-side badge.
+            // Keep a sliding window for large activity counts so the active dot
+            // remains visible even when the user swipes beyond the first seven.
+            val visibleDots = eventCount.coerceAtMost(7)
+            val windowStart = (selectedEventIndex - visibleDots / 2)
+                .coerceIn(0, eventCount - visibleDots)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(visibleDots) { dot ->
+                    val selected = windowStart + dot == selectedEventIndex
+                    Box(
+                        modifier = Modifier
+                            .size(if (selected) 5.dp else 4.dp)
+                            .background(
+                                styledContentColor.copy(alpha = if (selected) 0.95f else 0.35f),
+                                CircleShape,
+                            ),
                     )
                 }
             }
