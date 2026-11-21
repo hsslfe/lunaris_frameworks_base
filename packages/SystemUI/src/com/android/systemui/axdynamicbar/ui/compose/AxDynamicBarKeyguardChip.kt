@@ -222,6 +222,7 @@ fun AxDynamicBarKeyguardChip(
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
+    val chargingSpeedLabel by viewModel.nowBarChargingSpeedLabel.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
     val hasNowBarActivity = state?.allEvents?.any {
         it !is IslandEvent.Charging || batteryInfo.isCharging
@@ -453,6 +454,7 @@ fun AxDynamicBarKeyguardChip(
                                 nowBarStyle = nowBarStyle.takeIf { it.enabled },
                                 isDozing = isDozing,
                                 batteryString = batteryString,
+                                chargingSpeedLabel = chargingSpeedLabel,
                                 aospChipExpandable = expandable,
                             )
                         }
@@ -483,6 +485,7 @@ private fun KeyguardChipBody(
     nowBarStyle: AxLockscreenNowBarSettings? = null,
     isDozing: Boolean = false,
     batteryString: String = "",
+    chargingSpeedLabel: String = "",
     aospChipExpandable: SystemUiExpandable,
 ) {
     val context = LocalContext.current
@@ -648,27 +651,31 @@ private fun KeyguardChipBody(
             horizontalArrangement = if (nowBarStyle != null) Arrangement.Center else Arrangement.Start,
         ) {
             if (nowBarStyle != null && event is IslandEvent.Charging) {
-                // Center the charging icon and its text together. Both use the
-                // measured space within the pill; neither keeps the old 110dp cap.
+                // Charging is a leading-icon layout, unlike the other centered
+                // Now Bar activities. Keep the bolt at the left inset and give
+                // its adjacent text ALL the remaining width.
                 BoxWithConstraints(
                     modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
+                    contentAlignment = Alignment.CenterStart,
                 ) {
                     val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
-                    val textWidth = (maxWidth - iconSize - SpaceXs).coerceAtLeast(40.dp)
+                    val iconGap = SpaceXs
+                    val textWidth = (maxWidth - iconSize - iconGap).coerceAtLeast(32.dp)
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
+                        horizontalArrangement = Arrangement.Start,
                     ) {
                         AnimatedChargingBoltIcon(styledContentColor, iconSize)
-                        Spacer(Modifier.width(SpaceXs))
+                        Spacer(Modifier.width(iconGap))
                         NowBarResponsiveChargingText(
                             event = event,
                             batteryString = batteryString,
+                            chargingSpeedLabel = chargingSpeedLabel,
                             color = styledContentColor,
                             heightDp = nowBarStyle.height,
                             availableWidth = textWidth,
-                            modifier = Modifier.widthIn(max = textWidth),
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -1241,6 +1248,7 @@ private fun AnimatedBatteryFillIcon(level: Int, color: Color, iconSize: Dp = Bat
 private fun NowBarResponsiveChargingText(
     event: IslandEvent.Charging,
     batteryString: String,
+    chargingSpeedLabel: String,
     color: Color,
     heightDp: Int,
     availableWidth: Dp,
@@ -1251,15 +1259,16 @@ private fun NowBarResponsiveChargingText(
     val chargingMessage = parts.firstOrNull().orEmpty()
     // The OS already supplies the localized charging-speed category. Remove
     // the percentage/time suffix; don't make it oversized in a narrow pill.
-    val speedLabel = remember(chargingMessage, defaultChargingLabel) {
-        chargingMessage
-            .replace(Regex("""[\d.,]+\s*%"""), "")
-            .substringBefore(" · ")
-            .substringBefore("•")
-            .substringBefore(",")
-            .trim(' ', '·', '(', ')', '-', '–')
-            .ifBlank { defaultChargingLabel }
-    }
+    val speedLabel = chargingSpeedLabel.takeIf { it.isNotBlank() }
+        ?: remember(chargingMessage, defaultChargingLabel) {
+            chargingMessage
+                .replace(Regex("""[\d.,]+\s*%"""), "")
+                .substringBefore(" · ")
+                .substringBefore("•")
+                .substringBefore(",")
+                .trim(' ', '·', '(', ')', '-', '–')
+                .ifBlank { defaultChargingLabel }
+        }
     // LOCKSCREEN_BATTERY_INFO controls whether the controller appends
     // actual reported amps, watts, volts and temperature. Retain them all.
     val detailItems = remember(parts) {
@@ -1292,7 +1301,7 @@ private fun NowBarResponsiveChargingText(
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.Start,
     ) {
         Text(
             text = speedLabel,
@@ -1300,8 +1309,8 @@ private fun NowBarResponsiveChargingText(
             color = color,
             maxLines = 1,
             overflow = if (marqueeEnabled) TextOverflow.Clip else TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(max = availableWidth).then(
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth().then(
                 if (marqueeEnabled) Modifier.basicMarquee(iterations = 1) else Modifier
             ),
         )
@@ -1315,8 +1324,8 @@ private fun NowBarResponsiveChargingText(
                 color = color.copy(alpha = AlphaSecondary),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = availableWidth),
+                textAlign = TextAlign.Start,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
