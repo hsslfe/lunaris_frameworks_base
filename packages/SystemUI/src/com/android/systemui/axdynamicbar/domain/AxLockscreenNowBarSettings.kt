@@ -41,9 +41,7 @@ data class AxLockscreenNowBarSettings(
     val charging: Boolean = false,
     val flashlight: Boolean = false,
     val buds: Boolean = true,
-    val aod: Boolean = true,
     val liveApps: Set<String> = emptySet(),
-    val pinnedApp: String? = null,
 ) {
     /** Only the original Now Bar activity categories are shown when this mode is selected. */
     fun shows(event: IslandEvent): Boolean = when (event) {
@@ -68,9 +66,9 @@ data class AxLockscreenNowBarSettings(
             "now_bar_height", "now_bar_width", "now_bar_corners", "now_bar_raise",
             "now_bar_art", "now_bar_buttons", "now_bar_text", "now_bar_text_size",
             "now_bar_wave", "now_bar_music", "now_bar_timers", "now_bar_calls",
-            "now_bar_live_updates", "now_bar_live_apps", "now_bar_pin", "now_bar_scores",
+            "now_bar_live_updates", "now_bar_live_apps", "now_bar_scores",
             "now_bar_recording", "now_bar_charging", "now_bar_flashlight", "now_bar_buds",
-            "now_bar_hide_call", "now_bar_aod",
+            "now_bar_hide_call",
         )
 
         fun read(resolver: ContentResolver, userId: Int): AxLockscreenNowBarSettings {
@@ -109,11 +107,7 @@ data class AxLockscreenNowBarSettings(
                 charging = on("now_bar_charging", false),
                 flashlight = on("now_bar_flashlight", false),
                 buds = on("now_bar_buds", true),
-                aod = on("now_bar_aod", true),
                 liveApps = packages,
-                pinnedApp = Settings.System.getStringForUser(
-                    resolver, "now_bar_pin", userId
-                )?.takeIf { it.isNotBlank() },
             )
         }
     }
