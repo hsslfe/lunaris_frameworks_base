@@ -160,9 +160,25 @@ constructor(
                                     ?.setExpandedMusicOpen(expandedMusicOpen)
                             }
                     }
-                    combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps) { expanded, lowUdfps
-                            ->
-                            expanded to lowUdfps
+                    scope.launch {
+                        // Raise updates the native layout, not a child offset. This
+                        // also preserves pointer hit-testing and the blur background.
+                        combine(
+                            viewModel.isKeyguardExpanded,
+                            viewModel.isLowUdfps,
+                            viewModel.nowBarAppearance,
+                        ) { expanded, lowUdfps, style ->
+                            Triple(expanded, lowUdfps, if (style.enabled) style.raise else 0)
+                        }
+                            .distinctUntilChanged()
+                            .collect { (expanded, lowUdfps, _) ->
+                                if (!expanded) {
+                                    applyCollapsedLp(composeView, lowUdfps)
+                                }
+                            }
+                    }
+                    combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps) {
+                            expanded, lowUdfps -> expanded to lowUdfps
                         }
                         .collect { (expanded, lowUdfps) ->
                             onExpandedStateChanged(
@@ -174,6 +190,13 @@ constructor(
                         }
                 }
             }
+    }
+
+    /** Raise the host view itself so its measured content and touch region move together. */
+    private fun collapsedBottomMarginPx(): Int {
+        val style = viewModel.nowBarAppearance.value
+        val raisedPx = if (style.enabled) style.raise.toFloat().dpToPx(context) else 0
+        return extraBottomMarginPx(context) + raisedPx
     }
 
     private fun onExpandedStateChanged(
@@ -268,7 +291,7 @@ constructor(
         val lowUdfps = viewModel.isLowUdfps.value
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         val chipAboveLockPx = CHIP_ABOVE_LOCK_MARGIN_DP.dpToPx(context)
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         constraintSet.apply {
             constrainWidth(dismissViewId, ConstraintSet.MATCH_CONSTRAINT)
@@ -380,7 +403,7 @@ constructor(
 
     private fun applyCollapsedLp(composeView: View, lowUdfps: Boolean) {
         val lp = composeView.layoutParams as ConstraintLayout.LayoutParams
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.topMargin = 0
