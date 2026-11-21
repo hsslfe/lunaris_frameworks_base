@@ -63,6 +63,9 @@ constructor(
     // Now Bar's own hidden activities never affect unlocked Dynamic Bar events.
     private val hiddenNowBarEventIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    // Re-select music once per lockscreen entry/wake; never override manual swipes.
+    @Volatile private var prioritizeMusicOnKeyguardEntry = false
+
     override var onFocusableRequested: ((Boolean) -> Unit)? = null
 
     var onCollapseRequested: (() -> Unit)? = null
@@ -161,6 +164,7 @@ constructor(
         }
 
         _isOnKeyguard.value = statusBarStateController.state == StatusBarState.KEYGUARD
+        prioritizeMusicOnKeyguardEntry = _isOnKeyguard.value && !_isDozing.value
         _isKeyguardFadingAway.value = keyguardStateController.isKeyguardFadingAway
         _isBouncerShowing.value = keyguardStateController.isPrimaryBouncerShowing
 
@@ -183,11 +187,21 @@ constructor(
                 }
 
                 override fun onStateChanged(newState: Int) {
+                    val enteringKeyguard =
+                        newState == StatusBarState.KEYGUARD && !_isOnKeyguard.value
+                    if (enteringKeyguard && !_isDozing.value) {
+                        prioritizeMusicOnKeyguardEntry = true
+                    } else if (newState != StatusBarState.KEYGUARD) {
+                        prioritizeMusicOnKeyguardEntry = false
+                    }
                     _isOnKeyguard.value = newState == StatusBarState.KEYGUARD
                     updateChipVisibility()
                 }
 
                 override fun onDozingChanged(dozing: Boolean) {
+                    if (_isDozing.value && !dozing && _isOnKeyguard.value) {
+                        prioritizeMusicOnKeyguardEntry = true
+                    }
                     _isDozing.value = dozing
                     updateChipVisibility()
                 }
@@ -327,8 +341,24 @@ constructor(
                 val prevPinnedId =
                     current.events.getOrNull(current.pinnedEventIndex)?.id
 
+                val musicOnEntryIndex =
+                    if (onKeyguard && settings.nowBarAppearance.value.enabled &&
+                        prioritizeMusicOnKeyguardEntry
+                    ) {
+                        val playing = events.indexOfFirst {
+                            it is IslandEvent.Media && it.isPlaying
+                        }
+                        if (playing >= 0) playing
+                        else events.indexOfFirst { it is IslandEvent.Media }
+                    } else -1
+                if (musicOnEntryIndex >= 0) {
+                    prioritizeMusicOnKeyguardEntry = false
+                }
                 val pinnedIndex =
                     when {
+                        // Music is the initial Now Bar card when opening the lockscreen;
+                        // later activity updates and swipe choices keep their own priority.
+                        musicOnEntryIndex >= 0 -> musicOnEntryIndex
                         hasNewEvents -> {
                             val currentIds = current.events.map { it.id }.toSet()
                             events.indexOfFirst { it.id !in currentIds }.coerceAtLeast(0)
@@ -385,6 +415,7 @@ constructor(
     }
 
     fun cycleNext() {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (current.events.size <= 1) return
         val next = (current.pinnedEventIndex + 1) % current.events.size
@@ -392,6 +423,7 @@ constructor(
     }
 
     fun cyclePrev() {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (current.events.size <= 1) return
         val prev = (current.pinnedEventIndex - 1 + current.events.size) % current.events.size
@@ -399,6 +431,7 @@ constructor(
     }
 
     fun pinEventAt(index: Int) {
+        prioritizeMusicOnKeyguardEntry = false
         val current = _uiState.value
         if (index < 0 || index >= current.events.size) return
         _uiState.value = current.copy(pinnedEventIndex = index)
