@@ -87,6 +87,8 @@ class BatteryInteractor @Inject constructor(
     /** @see [BatteryRepository.batteryIconStyle] */
     val batteryIconStyle: StateFlow<Int> = repo.batteryIconStyle
 
+    val neonRingOptions = repo.neonRingOptions
+
     /** @see [BatteryRepository.showBatteryPercentMode] */
     val showBatteryPercentMode: StateFlow<Int> = repo.showBatteryPercentMode
 

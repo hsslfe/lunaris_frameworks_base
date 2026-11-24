@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.android.systemui.common.ui.compose.load
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.statusbar.phone.domain.interactor.IsAreaDark
+import com.android.systemui.statusbar.pipeline.battery.data.repository.BatteryRepository
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryColors
 import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.BatteryNextToPercentViewModel
 import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.BatteryViewModel
@@ -99,18 +100,26 @@ fun BatteryWithChargeStatus(
             }
         }
 
-        BatteryCanvas(
-            path = path,
-            innerWidth = viewModel.innerWidth,
-            innerHeight = viewModel.innerHeight,
-            glyphs = viewModel.glyphList,
-            level = viewModel.level,
-            isFull = viewModel.isFull,
-            colorsProvider = colorProvider,
-            modifier =
-                Modifier.height(batteryHeight).align(Alignment.CenterVertically).wrapContentWidth(),
-            contentDescription = viewModel.contentDescription.load() ?: "",
-        )
+        if (viewModel.batteryIconStyle == BatteryRepository.ICON_STYLE_NEON_RING) {
+            UnifiedBattery(
+                viewModel = viewModel,
+                isDarkProvider = isDarkProvider,
+                modifier = Modifier.height(batteryHeight * NEON_RING_SCALE).wrapContentWidth(),
+            )
+        } else {
+            BatteryCanvas(
+                path = path,
+                innerWidth = viewModel.innerWidth,
+                innerHeight = viewModel.innerHeight,
+                glyphs = viewModel.glyphList,
+                level = viewModel.level,
+                isFull = viewModel.isFull,
+                colorsProvider = colorProvider,
+                modifier =
+                    Modifier.height(batteryHeight).align(Alignment.CenterVertically).wrapContentWidth(),
+                contentDescription = viewModel.contentDescription.load() ?: "",
+            )
+        }
         if (shouldShowPercent(showPercentMode, viewModel)) {
             // The text can just use the Default.fill color, since we don't want to colorize it
             val colorProducer = {
