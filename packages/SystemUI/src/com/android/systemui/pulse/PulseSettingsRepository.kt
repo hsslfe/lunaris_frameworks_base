@@ -42,6 +42,7 @@ class PulseSettingsRepository @Inject constructor(
         private const val PULSE_CUSTOM_COLOR = Settings.Secure.PULSE_CUSTOM_COLOR
         private const val PULSE_RENDERER = Settings.Secure.PULSE_RENDERER
         private const val PULSE_SHOW_ON_AMBIENT = Settings.Secure.PULSE_SHOW_ON_AMBIENT
+        private const val PULSE_SHOW_WHEN_UNLOCKED = Settings.Secure.PULSE_SHOW_WHEN_UNLOCKED
         private const val PULSE_SHOW_ON_MEDIA_PLAYER = Settings.Secure.PULSE_SHOW_ON_MEDIA_PLAYER
         private const val PULSE_HEIGHT_MULTIPLIER = Settings.Secure.PULSE_HEIGHT_MULTIPLIER
         private const val PULSE_BASS_HAPTICS = Settings.Secure.PULSE_BASS_HAPTICS
@@ -54,6 +55,7 @@ class PulseSettingsRepository @Inject constructor(
         private const val DEFAULT_CUSTOM_COLOR = Color.WHITE
         private const val DEFAULT_RENDERER = "solid"
         private const val DEFAULT_SHOW_ON_AMBIENT = true
+        private const val DEFAULT_SHOW_WHEN_UNLOCKED = false
         private const val DEFAULT_SHOW_ON_MEDIA_PLAYER = false
         private const val DEFAULT_HEIGHT_MULTIPLIER = 100 // 100 = 1.0x (normal height)
         private const val DEFAULT_HAPTICS_ENABLED = false
@@ -72,6 +74,7 @@ class PulseSettingsRepository @Inject constructor(
     private var cachedCustomColor: Int? = null
     private var cachedRenderer: String? = null
     private var cachedShowOnAmbient: Boolean? = null
+    private var cachedShowWhenUnlocked: Boolean? = null
     private var cachedShowOnMediaPlayer: Boolean? = null
     private var cachedHeightMultiplier: Float? = null
     private var cachedHapticsEnabled: Boolean? = null
@@ -91,6 +94,7 @@ class PulseSettingsRepository @Inject constructor(
             Settings.Secure.getUriFor(PULSE_CUSTOM_COLOR),
             Settings.Secure.getUriFor(PULSE_RENDERER),
             Settings.Secure.getUriFor(PULSE_SHOW_ON_AMBIENT),
+            Settings.Secure.getUriFor(PULSE_SHOW_WHEN_UNLOCKED),
             Settings.Secure.getUriFor(PULSE_SHOW_ON_MEDIA_PLAYER),
             Settings.Secure.getUriFor(PULSE_HEIGHT_MULTIPLIER),
             Settings.Secure.getUriFor(PULSE_RENDERER),
@@ -163,6 +167,15 @@ class PulseSettingsRepository @Inject constructor(
         return cachedShowOnAmbient!!
     }
 
+    fun isPulseShowWhenUnlocked(): Boolean {
+        if (cachedShowWhenUnlocked == null) {
+            cachedShowWhenUnlocked = getSecureSetting(
+                PULSE_SHOW_WHEN_UNLOCKED, DEFAULT_SHOW_WHEN_UNLOCKED
+            )
+        }
+        return cachedShowWhenUnlocked!!
+    }
+
     fun isPulseMediaEnabled(): Boolean {
         if (cachedShowOnMediaPlayer == null) {
             cachedShowOnMediaPlayer = getSecureSetting(PULSE_SHOW_ON_MEDIA_PLAYER, DEFAULT_SHOW_ON_MEDIA_PLAYER)
@@ -216,6 +229,7 @@ class PulseSettingsRepository @Inject constructor(
         cachedCustomColor = null
         cachedRenderer = null
         cachedShowOnAmbient = null
+        cachedShowWhenUnlocked = null
         cachedHeightMultiplier = null
         cachedHapticsEnabled = null
         cachedHapticsMode = null
