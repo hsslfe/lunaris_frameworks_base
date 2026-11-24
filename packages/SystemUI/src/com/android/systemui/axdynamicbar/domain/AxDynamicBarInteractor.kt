@@ -253,7 +253,6 @@ constructor(
             ) { enabled, sources, _, pill ->
                 Triple(enabled, sources, pill)
             }.collect { (enabled, sources, pill) ->
-                if (!enabled) dismissNotificationAlert()
                 if (sources?.contains("charging") == true) {
                     // A charging event started in Dynamic Bar must not auto-dismiss
                     // after Now Bar takes over its lifetime.
@@ -274,7 +273,9 @@ constructor(
         }
 
         applicationScope.launch {
-            settings.isHeadsUpEnabled.collect { enabled ->
+            combine(settings.isHeadsUpEnabled, settings.isStatusBarEnabled) { headsUp, statusBar ->
+                headsUp && statusBar
+            }.distinctUntilChanged().collect { enabled ->
                 if (!enabled) dismissNotificationAlert()
             }
         }
@@ -285,20 +286,23 @@ constructor(
                     hiddenNowBarEventIds.removeAll { id -> sourceEvents.none { it.id == id } }
                 },
                 settings.disabledEventTypes,
-                combine(settings.isEnabled, settings.isKeyguardEnabled) { enabled, kgEnabled ->
-                    enabled to kgEnabled
+                combine(settings.isEnabled, settings.isKeyguardEnabled, settings.isStatusBarEnabled) {
+                        enabled, keyguard, statusBar ->
+                    (enabled && keyguard) to statusBar
                 },
                 combine(
                     settings.nowBarAppearance.distinctUntilChangedBy { it.sourceTypes to it.liveApps },
                     settings.isKeyguardMusicPillEnabled,
                 ) { nowBar, pill -> nowBar to pill },
                 combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
-            ) { raw, _, (enabled, kgEnabled), (nowBar, pill), (kg, dozing) ->
+            ) { raw, _, (keyguardEnabled, statusBarEnabled), (nowBar, pill), (kg, dozing) ->
                 raw.filter { e ->
                     when {
                         kg && nowBar.enabled -> nowBar.shows(e)
                         kg && e is IslandEvent.Media -> pill
-                        else -> enabled && (!kg || kgEnabled) && settings.isEventEnabled(e)
+                        !settings.isEventEnabled(e) -> false
+                        kg -> keyguardEnabled
+                        else -> statusBarEnabled
                     }
                 } to (kg to dozing)
             }.collect { (rawEvents, keyguardAndDoze) ->
@@ -555,7 +559,7 @@ constructor(
     private fun showNotificationAlert(
         notification: IslandEvent.Notification,
     ) {
-        if (!settings.isEnabled.value) return
+        if (!settings.isStatusBarEnabled.value) return
         if (panelBlocking || statusBlocking || _isOnKeyguard.value) return
         if (shouldSuppressForDndOrRinger(notification)) return
         val current = _uiState.value

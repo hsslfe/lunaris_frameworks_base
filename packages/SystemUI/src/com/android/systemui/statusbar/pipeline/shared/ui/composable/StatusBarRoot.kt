@@ -519,8 +519,9 @@ private fun addStartSideComposable(
                         )
                     }
 
-                val axEnabled by axDynamicBarChipViewModel.interactor.settings.isEnabled.collectAsState()
-                if (axEnabled) {
+                val showDynamicBar by axDynamicBarChipViewModel.interactor.settings
+                    .isStatusBarEnabled.collectAsState()
+                if (showDynamicBar) {
                     AxDynamicBarChip(
                         viewModel = axDynamicBarChipViewModel,
                         modifier = Modifier.widthIn(max = chipsMaxWidth),

@@ -29,6 +29,7 @@ class AxDynamicBarSettings @Inject constructor(
 ) {
     companion object {
         const val KEY_ENABLED = "ax_dynamic_bar_enabled"
+        const val KEY_STATUS_BAR_ENABLED = "ax_dynamic_bar_status_bar_enabled"
         const val KEY_EVENTS = "ax_dynamic_bar_events"
         const val KEY_KEYGUARD_ENABLED = "ax_dynamic_bar_keyguard_enabled"
         const val KEY_KEYGUARD_MUSIC_PILL_ENABLED = "ax_dynamic_bar_keyguard_music_pill"
@@ -47,6 +48,9 @@ class AxDynamicBarSettings @Inject constructor(
 
     private val _isEnabled = MutableStateFlow(false)
     @get:JvmName("getIsEnabled") val isEnabled: StateFlow<Boolean> = _isEnabled.asStateFlow()
+
+    private val _isStatusBarEnabled = MutableStateFlow(false)
+    val isStatusBarEnabled: StateFlow<Boolean> = _isStatusBarEnabled.asStateFlow()
 
     private val _isKeyguardEnabled = MutableStateFlow(true)
     val isKeyguardEnabled: StateFlow<Boolean> = _isKeyguardEnabled.asStateFlow()
@@ -100,6 +104,9 @@ class AxDynamicBarSettings @Inject constructor(
             false,
             settingsObserver,
             UserHandle.USER_ALL,
+        )
+        secureSettings.registerContentObserverForUserSync(
+            KEY_STATUS_BAR_ENABLED, false, settingsObserver, UserHandle.USER_ALL,
         )
         secureSettings.registerContentObserverForUserSync(
             KEY_EVENTS,
@@ -166,6 +173,8 @@ class AxDynamicBarSettings @Inject constructor(
             AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId)
         _isEnabled.value =
             secureSettings.getIntForUser(KEY_ENABLED, 0, UserHandle.USER_CURRENT) == 1
+        _isStatusBarEnabled.value = _isEnabled.value &&
+            secureSettings.getIntForUser(KEY_STATUS_BAR_ENABLED, 1, UserHandle.USER_CURRENT) == 1
         _isKeyguardEnabled.value =
             secureSettings.getIntForUser(KEY_KEYGUARD_ENABLED, 1, UserHandle.USER_CURRENT) == 1
         _isKeyguardMusicPillEnabled.value =
@@ -203,5 +212,5 @@ class AxDynamicBarSettings @Inject constructor(
             "biometric_unlock" !in _disabledEventTypes.value
 
     fun isNotificationEventsActive(): Boolean =
-        _isEnabled.value && "notification" !in _disabledEventTypes.value
+        _isStatusBarEnabled.value && "notification" !in _disabledEventTypes.value
 }

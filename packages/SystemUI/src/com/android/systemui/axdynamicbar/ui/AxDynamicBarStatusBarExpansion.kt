@@ -45,13 +45,13 @@ constructor(
         combine(
             _intent,
             interactor.isOnKeyguard,
-            interactor.settings.isEnabled,
+            interactor.settings.isStatusBarEnabled,
         ) { intent, onKg, enabled -> intent && !onKg && enabled }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Lazily, false)
 
     init {
-        interactor.settings.isEnabled
+        interactor.settings.isStatusBarEnabled
             .onEach { if (!it) collapse() }
             .launchIn(applicationScope)
 
@@ -80,7 +80,7 @@ constructor(
     }
 
     fun expand() {
-        if (!interactor.settings.isEnabled.value || interactor.isOnKeyguard.value ||
+        if (!interactor.settings.isStatusBarEnabled.value || interactor.isOnKeyguard.value ||
             interactor.isPanelExpanded.value || interactor.qsExpansion.value > 0f ||
             interactor.legacyShadeExpansion.value > 0f
         ) return
