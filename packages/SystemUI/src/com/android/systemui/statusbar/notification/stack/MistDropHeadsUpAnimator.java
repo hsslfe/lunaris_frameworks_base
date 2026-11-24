@@ -723,6 +723,7 @@ final class MistDropHeadsUpAnimator {
                     Interpolators.LINEAR_OUT_SLOW_IN);
             float blur = dp(20f) * (1f - progress(t, A_REVEAL_START, A_REVEAL_BLUR_END,
                     Interpolators.FAST_OUT_SLOW_IN));
+            d.rowRevealing = revealAlpha > 0f;
             transformRow(blob, revealAlpha, blur);
         }
 
@@ -876,6 +877,7 @@ final class MistDropHeadsUpAnimator {
         float fillAlpha;
         int fillColor;
         float glassAlpha;
+        boolean rowRevealing;
         float rimAlpha;
         float glowAlpha;
         float rippleAlpha;
@@ -977,6 +979,7 @@ final class MistDropHeadsUpAnimator {
             inkAlpha = 0f;
             fillAlpha = 0f;
             glassAlpha = 0f;
+            rowRevealing = false;
             rimAlpha = 0f;
             glowAlpha = 0f;
             rippleAlpha = 0f;
@@ -1074,11 +1077,11 @@ final class MistDropHeadsUpAnimator {
                 blur.setCornerRadius(corner);
                 blur.setBlurRadius(Math.round(blurRadius));
                 blur.setColor(color);
+                blur.draw(canvas);
             } else {
                 blur.setBlurRadius(0);
                 blur.setColor(Color.TRANSPARENT);
             }
-            blur.draw(canvas);
         }
 
         private void drawShine(Canvas canvas, RectF body, float strength) {
@@ -1138,6 +1141,8 @@ final class MistDropHeadsUpAnimator {
             float liquidShape = blurStyle && hasShape ? Math.max(inkAlpha, fillAlpha) : 0f;
             float shapeBlur = Math.max(mGlassBlurRadius * glassAlpha,
                     mLiquidBlurRadius * liquidShape);
+            // A backdrop blur cuts through the window, including any row already drawn.
+            if (rowRevealing) shapeBlur = 0f;
             int shapeTint = Color.argb(Math.round(Color.alpha(mGlassBlurColor) * glassAlpha),
                     255, 255, 255);
             updateBlur(mBlur, hasShape ? shape : null, shapeCorner, shapeBlur, shapeTint, canvas);
