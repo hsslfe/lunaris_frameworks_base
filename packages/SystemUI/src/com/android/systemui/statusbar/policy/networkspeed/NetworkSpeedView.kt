@@ -285,8 +285,6 @@ class NetworkSpeedView @JvmOverloads constructor(
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         minimumWidth = resources.getDimensionPixelSize(R.dimen.network_speed_view_width)
-        setPaddingRelative(paddingStart, paddingTop,
-            resources.getDimensionPixelSize(R.dimen.network_speed_view_padding_end), paddingBottom)
         updateTextLayout(state?.singleLine ?: false)
         val size = resources.getDimensionPixelSize(R.dimen.status_bar_icon_size)
         dotView.layoutParams = dotView.layoutParams.apply {
@@ -297,6 +295,12 @@ class NetworkSpeedView @JvmOverloads constructor(
 
     private fun updateTextLayout(singleLine: Boolean) {
         speedText.orientation = if (singleLine) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        // Move the entire double-line stack through layout spacing so it stays within bounds.
+        val endPadding = resources.getDimensionPixelSize(R.dimen.network_speed_view_padding_end)
+        val doubleLineOffset = if (singleLine) 0 else TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 1f, resources.displayMetrics).toInt()
+        setPaddingRelative(paddingStart, paddingTop,
+            (endPadding - doubleLineOffset).coerceAtLeast(0), paddingBottom)
         speedNumber?.setTextSize(TypedValue.COMPLEX_UNIT_PX, resources.getDimension(
             if (singleLine) R.dimen.network_speed_single_line_text_size
             else R.dimen.network_speed_text_size))
