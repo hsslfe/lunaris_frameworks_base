@@ -163,9 +163,10 @@ internal fun PillEventIcon(
     event: IslandEvent,
     tint: Color? = null,
     animated: Boolean = true,
+    staticIconSize: Dp = SizeBadge,
 ) {
     if (!animated) {
-        StaticPillEventIcon(event, tint)
+        StaticPillEventIcon(event, tint, staticIconSize)
         return
     }
     when (event) {
@@ -195,7 +196,11 @@ internal fun PillEventIcon(
 }
 
 @Composable
-private fun StaticPillEventIcon(event: IslandEvent, tint: Color? = null) {
+private fun StaticPillEventIcon(
+    event: IslandEvent,
+    tint: Color? = null,
+    iconSize: Dp = SizeBadge,
+) {
     when (event) {
         is IslandEvent.Media -> MediaPillIcon(event, animated = false)
         is IslandEvent.Notification -> NotificationPillIcon(event)
@@ -214,7 +219,7 @@ private fun StaticPillEventIcon(event: IslandEvent, tint: Color? = null) {
                     Icons.Filled.Notifications,
                     null,
                     tint = tint ?: BlueAccent,
-                    modifier = Modifier.size(SizeBadge),
+                    modifier = Modifier.size(iconSize),
                 )
             }
         else -> {
@@ -224,7 +229,7 @@ private fun StaticPillEventIcon(event: IslandEvent, tint: Color? = null) {
                     it,
                     null,
                     tint = tint ?: style.accent,
-                    modifier = Modifier.size(SizeBadge),
+                    modifier = Modifier.size(iconSize),
                 )
             }
         }
