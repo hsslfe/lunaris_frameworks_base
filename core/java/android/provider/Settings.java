@@ -15243,6 +15243,13 @@ public final class Settings {
         public static final String PULSE_SHOW_ON_AMBIENT = "pulse_show_on_ambient";
 
         /**
+         * Show the Pulse music visualizer while the device is unlocked.
+         * 0 = disabled (default), 1 = enabled.
+         * @hide
+         */
+        public static final String PULSE_SHOW_WHEN_UNLOCKED = "pulse_show_when_unlocked";
+
+        /**
          * @hide
          */
         public static final String PULSE_SHOW_ON_MEDIA_PLAYER = "media_player_pulse_enabled";
