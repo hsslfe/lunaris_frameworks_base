@@ -47,7 +47,7 @@ interface CaptioningModule {
         fun provideVolumePanelUiComponent(viewModel: CaptioningViewModel): VolumePanelUiComponent =
             ToggleButtonComponent(
                 viewModel.buttonViewModel,
-                viewModel::setIsSystemAudioCaptioningEnabled,
+                onCheckedChange = viewModel::setIsSystemAudioCaptioningEnabled,
             )
     }
 }

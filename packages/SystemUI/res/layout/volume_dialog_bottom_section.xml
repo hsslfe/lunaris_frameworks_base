@@ -51,7 +51,7 @@
         android:tint="@androidprv:color/materialColorPrimary"
         android:visibility="gone"/>
 
-    <ImageButton
+    <com.android.systemui.volume.dialog.settings.ui.view.VolumeSettingsButton
         android:id="@+id/volume_dialog_settings"
         android:layout_width="@dimen/volume_dialog_button_size"
         android:layout_height="@dimen/volume_dialog_button_size"

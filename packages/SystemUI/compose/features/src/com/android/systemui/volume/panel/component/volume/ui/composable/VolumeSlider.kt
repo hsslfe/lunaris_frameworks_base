@@ -16,6 +16,9 @@
 
 package com.android.systemui.volume.panel.component.volume.ui.composable
 
+import com.android.systemui.volume.panel.ui.composable.LocalPanelGradientEnd
+import com.android.systemui.volume.panel.ui.composable.LocalPanelGradientBrush
+import androidx.compose.foundation.background
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -145,6 +148,7 @@ fun VolumeSlider(
             val disabledInactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
             val materialSliderColors =
                 SliderDefaults.colors(
+                    thumbColor = LocalPanelGradientEnd.current,
                     activeTrackColor = Color.Transparent,
                     activeTickColor = surfaceColor,
                     inactiveTrackColor = inactiveTrackColor,
@@ -301,13 +305,10 @@ private fun ActiveSliderTrackBlur(
         modifier = modifier,
         contentAlignment = alignment,
     ) {
-        AxBlurSurface(
-            modifier = Modifier
-                .fillMaxWidth(fraction)
-                .height(trackHeight),
-            shape = activeSliderTrackShape(12.dp),
-            cornerRadius = 0.dp,
-            surfaceColor = activeSliderBlurColor(isEnabled),
+        PanelSliderFill(
+            modifier = Modifier.fillMaxWidth(fraction).height(trackHeight),
+            radius = 12.dp,
+            enabled = isEnabled,
         )
     }
 }
@@ -319,6 +320,22 @@ private fun activeSliderTrackShape(radius: Dp): RoundedCornerShape =
         topEnd = 0.dp,
         bottomEnd = 0.dp,
     )
+
+@Composable
+private fun PanelSliderFill(modifier: Modifier, radius: Dp, enabled: Boolean) {
+    val brush = LocalPanelGradientBrush.current
+    val shape = activeSliderTrackShape(radius)
+    if (brush != null && enabled) {
+        Box(modifier.background(brush, shape))
+    } else {
+        AxBlurSurface(
+            modifier = modifier,
+            shape = shape,
+            cornerRadius = 0.dp,
+            surfaceColor = activeSliderBlurColor(enabled),
+        )
+    }
+}
 
 @Composable
 private fun activeSliderBlurColor(isEnabled: Boolean): Color =
@@ -431,12 +448,7 @@ private fun LegacyVolumeSlider(
         },
         interactionSource = interactionSource,
         indicatorBackground = { indicatorModifier, indicatorRadius ->
-            AxBlurSurface(
-                modifier = indicatorModifier,
-                shape = activeSliderTrackShape(indicatorRadius),
-                cornerRadius = 0.dp,
-                surfaceColor = activeSliderBlurColor(state.isEnabled),
-            )
+            PanelSliderFill(indicatorModifier, indicatorRadius, state.isEnabled)
         },
     )
 }

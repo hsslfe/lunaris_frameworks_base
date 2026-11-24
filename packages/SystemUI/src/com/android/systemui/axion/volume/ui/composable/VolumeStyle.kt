@@ -16,6 +16,7 @@
 
 package com.android.systemui.axion.volume.ui.composable
 
+import com.android.systemui.volume.dialog.sliders.ui.compose.LocalVolumeAccentBrush
 import android.content.Context
 import android.database.ContentObserver
 import android.os.Handler
@@ -23,10 +24,13 @@ import android.os.Looper
 import android.os.UserHandle
 import android.provider.Settings
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import com.android.systemui.axion.volume.ui.composable.lunaris.LunarisVolumeDialogContent
 import com.android.systemui.axion.volume.ui.composable.moto.MotoVolumeDialogContent
 import com.android.systemui.axion.volume.ui.viewmodel.AxionVolumeDialogViewModel
+import com.android.systemui.volume.dialog.sliders.ui.compose.createGradientBrush
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberVolumeGradient
 
 enum class VolumeStyle(val value: Int) {
     AXION(0),
@@ -77,15 +81,21 @@ private fun readStyle(context: Context): VolumeStyle =
         )
     )
 
+internal val LocalVolumeFillBrush = compositionLocalOf<Brush?> { null }
+
 @Composable
 fun VolumeStyleDispatcher(
     viewModel: AxionVolumeDialogViewModel,
     style: VolumeStyle = rememberVolumeStyle().value,
     onMotoExpandedLayoutChanged: (Boolean) -> Unit = {},
 ) {
-    when (style) {
-        VolumeStyle.AXION  -> AxionVolumeDialogContent(viewModel)
-        VolumeStyle.LUNARIS -> LunarisVolumeDialogContent(viewModel)
-        VolumeStyle.MOTO -> MotoVolumeDialogContent(viewModel, onMotoExpandedLayoutChanged)
+    val gradient = rememberVolumeGradient()
+    val brush = remember(gradient) { createGradientBrush(gradient) }
+    CompositionLocalProvider(LocalVolumeAccentBrush provides brush, LocalVolumeFillBrush provides brush) {
+        when (style) {
+            VolumeStyle.AXION  -> AxionVolumeDialogContent(viewModel)
+            VolumeStyle.LUNARIS -> LunarisVolumeDialogContent(viewModel)
+            VolumeStyle.MOTO -> MotoVolumeDialogContent(viewModel, onMotoExpandedLayoutChanged)
+        }
     }
 }

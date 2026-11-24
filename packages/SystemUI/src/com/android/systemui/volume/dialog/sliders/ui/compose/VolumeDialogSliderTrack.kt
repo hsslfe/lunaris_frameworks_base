@@ -16,6 +16,7 @@
 
 package com.android.systemui.volume.dialog.sliders.ui.compose
 
+import androidx.compose.runtime.compositionLocalOf
 import android.database.ContentObserver
 import android.os.UserHandle
 import android.provider.Settings
@@ -101,17 +102,8 @@ fun SliderTrack(
                 gapSize = thumbTrackGapSize,
             )
         }
-    val gradient =
-        if (rememberGradientColorMode() == 1) {
-            rememberGradientCustomColors()
-        } else {
-            VolumeGradient(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
-        }
-    val gradientEnabled = rememberVolumeGradientEnabled()
-    val gradientBrush =
-        remember(ignoreGradient, gradient, gradientEnabled) {
-            if (!ignoreGradient && gradientEnabled) createGradientBrush(gradient) else null
-        }
+    val gradient = if (ignoreGradient) null else rememberVolumeGradient()
+    val gradientBrush = remember(gradient) { createGradientBrush(gradient) }
     Layout(
         measurePolicy = measurePolicy,
         content = {
@@ -254,10 +246,22 @@ fun SliderTrack(
     )
 }
 
+val LocalVolumeAccentBrush = compositionLocalOf<Brush?> { null }
+
 data class VolumeGradient(
     val startColor: Color,
     val endColor: Color,
 )
+
+@Composable
+fun rememberVolumeGradient(): VolumeGradient? {
+    if (!rememberVolumeGradientEnabled()) return null
+    return if (rememberGradientColorMode() == 1) {
+        rememberGradientCustomColors()
+    } else {
+        VolumeGradient(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+    }
+}
 
 @Composable
 fun rememberVolumeGradientEnabled(): Boolean {

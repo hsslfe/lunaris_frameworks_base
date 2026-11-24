@@ -33,10 +33,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.platform.*
@@ -180,7 +181,7 @@ fun VolumeSlider(
         )
     }
 
-    val primary = MaterialTheme.colorScheme.primary
+    val fillBrush = LocalVolumeFillBrush.current ?: SolidColor(MaterialTheme.colorScheme.primary)
     val onSurface = MaterialTheme.colorScheme.onSurface
     val density = LocalDensity.current
 
@@ -317,7 +318,9 @@ fun VolumeSlider(
 
                         val minHeight = w
                         val ph = minHeight + (h - minHeight) * animatedValue
-                        drawRoundRect(primary, Offset(0f, h - ph), Size(w, ph), CornerRadius(w / 2))
+                        inset(0f, h - ph, 0f, 0f) {
+                            drawRoundRect(fillBrush, cornerRadius = CornerRadius(w / 2f))
+                        }
                     }
             )
         }
