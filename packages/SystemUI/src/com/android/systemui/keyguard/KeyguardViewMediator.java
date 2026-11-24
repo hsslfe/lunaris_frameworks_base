@@ -201,6 +201,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -530,6 +531,7 @@ public class KeyguardViewMediator implements CoreStartable,
     private SoundPool mTrustedSounds;
     private int mLockSoundId;
     private int mUnlockSoundId;
+    private final AtomicBoolean mUnlockSoundPending = new AtomicBoolean();
     private int mTrustedSoundId;
     private int mLockSoundStreamId;
     private int mTrustedSoundStreamId;
@@ -3646,10 +3648,13 @@ public class KeyguardViewMediator implements CoreStartable,
         if (DEBUG) Log.d(TAG, "onKeyguardExitFinished()");
         // only play "unlock" noises if not on a call (since the incall UI
         // disables the keyguard)
-        if (TelephonyManager.EXTRA_STATE_IDLE.equals(mPhoneState)) {
-            if (mShowing && mDeviceInteractive) {
-                playSounds(false);
-            }
+        // Consume once per lock cycle; mShowing may already be false while exiting.
+        final boolean unlockSoundPending = mUnlockSoundPending.getAndSet(false);
+        if (unlockSoundPending
+                && TelephonyManager.EXTRA_STATE_IDLE.equals(mPhoneState)
+                && !mGoingToSleep
+                && (mDeviceInteractive || mWakeAndUnlocking)) {
+            playSounds(false);
         }
 
         setShowingLocked(false, "onKeyguardExitFinished: " + reason);
@@ -4279,6 +4284,9 @@ public class KeyguardViewMediator implements CoreStartable,
     }
 
     private void setShowingLocked(boolean showing, boolean forceCallbacks, String reason) {
+        if (showing) {
+            mUnlockSoundPending.set(true);
+        }
         final boolean aodShowing = mDozing && !mWakeAndUnlocking;
         final boolean notifyDefaultDisplayCallbacks = showing != mShowing || forceCallbacks;
         final boolean updateActivityLockScreenState = showing != mShowing
