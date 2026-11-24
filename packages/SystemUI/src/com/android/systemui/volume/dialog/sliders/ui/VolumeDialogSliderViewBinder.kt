@@ -16,6 +16,7 @@
 
 package com.android.systemui.volume.dialog.sliders.ui
 
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberVolumeGradient
 import android.os.UserHandle
 import android.provider.Settings
 import android.view.View
@@ -47,9 +48,6 @@ import com.android.systemui.res.R
 import com.android.systemui.volume.dialog.domain.interactor.DesktopAudioTileDetailsFeatureInteractor
 import com.android.systemui.volume.dialog.sliders.dagger.VolumeDialogSliderScope
 import com.android.systemui.volume.dialog.sliders.ui.compose.SliderTrack
-import com.android.systemui.volume.dialog.sliders.ui.compose.rememberGradientColorMode
-import com.android.systemui.volume.dialog.sliders.ui.compose.rememberGradientCustomColors
-import com.android.systemui.volume.dialog.sliders.ui.compose.rememberVolumeGradientEnabled
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogOverscrollViewModel
 import com.android.systemui.volume.dialog.sliders.ui.viewmodel.VolumeDialogSliderViewModel
 import com.android.systemui.volume.haptics.ui.VolumeHapticsConfigsProvider
@@ -132,15 +130,8 @@ private fun VolumeDialogSlider(
         }
     }
 
-    val thumbColorOverride: Color? =
-        if (!rememberVolumeGradientEnabled()) {
-            null
-        } else if (rememberGradientColorMode() == 1) {
-            val gradient = rememberGradientCustomColors()
-            gradient.startColor
-        } else {
-            MaterialTheme.colorScheme.primary
-        }
+    val gradient = rememberVolumeGradient()
+    val thumbColorOverride = gradient?.startColor
 
     Slider(
         value = sliderStateModel.value,

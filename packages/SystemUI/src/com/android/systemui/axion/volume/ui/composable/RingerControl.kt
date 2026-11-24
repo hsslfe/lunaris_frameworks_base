@@ -17,6 +17,8 @@
 package com.android.systemui.axion.volume.ui.composable
 
 import androidx.compose.foundation.BorderStroke
+import com.android.systemui.volume.dialog.sliders.ui.compose.LocalVolumeAccentBrush
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -53,15 +55,22 @@ fun RingerSegmentedButton(
     ) {
         options.forEachIndexed { index, (mode, icon) ->
             val isSelected = ringerMode == mode
+            val shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
+            val brush = if (isSelected) LocalVolumeFillBrush.current else null
             SegmentedButton(
+                modifier = brush?.let {
+                    Modifier.wrapContentHeight().height(40.dp).background(it, shape)
+                } ?: Modifier,
+                border = LocalVolumeAccentBrush.current?.let { BorderStroke(1.dp, it) }
+                    ?: BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 selected = isSelected,
                 onClick = { 
                     viewModel.rescheduleTimeout()
                     viewModel.setRingerMode(mode) 
                 },
-                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                shape = shape,
                 colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = MaterialTheme.colorScheme.primary,
+                    activeContainerColor = if (brush == null) MaterialTheme.colorScheme.primary else Color.Transparent,
                     activeContentColor = MaterialTheme.colorScheme.onPrimary,
                     inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     inactiveContentColor = MaterialTheme.colorScheme.onSurface

@@ -16,6 +16,12 @@
 
 package com.android.systemui.volume.panel.component.bottombar.ui
 
+import com.android.systemui.volume.panel.ui.composable.LocalPanelGradientBrush
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,15 +50,27 @@ constructor(
 
     @Composable
     override fun VolumePanelComposeScope.Content(modifier: Modifier) {
+        val brush = LocalPanelGradientBrush.current
         Row(
             modifier = modifier.heightIn(min = if (isLargeScreen) 54.dp else 48.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            PlatformOutlinedButton(onClick = viewModel::onSettingsClicked) {
+            PlatformOutlinedButton(
+                onClick = viewModel::onSettingsClicked,
+                border = brush?.let { BorderStroke(1.dp, it) }
+                    ?: BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            ) {
                 Text(text = stringResource(R.string.volume_panel_dialog_settings_button))
             }
-            PlatformButton(onClick = viewModel::onDoneClicked) {
+            PlatformButton(
+                onClick = viewModel::onDoneClicked,
+                modifier = brush?.let { Modifier.background(it, ButtonDefaults.shape) } ?: Modifier,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (brush == null) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
                 Text(stringResource(R.string.inline_done_button))
             }
         }

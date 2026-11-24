@@ -16,6 +16,15 @@
 
 package com.android.systemui.volume.panel.ui.composable
 
+import com.android.systemui.volume.dialog.sliders.ui.compose.LocalVolumeAccentBrush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Brush
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberVolumeGradient
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +48,10 @@ import com.android.systemui.volume.panel.ui.viewmodel.VolumePanelViewModel
 
 /** Same as android.platform.systemui_tapl.ui.VolumePanel#VolumePanelTestTag */
 private const val VolumePanelTestTag = "VolumePanel"
+internal val LocalPanelGradientBrush = compositionLocalOf<Brush?> { null }
+
+internal val LocalPanelGradientEnd = compositionLocalOf { Color.Unspecified }
+
 private val padding = 24.dp
 
 @Composable
@@ -47,15 +60,29 @@ fun VolumePanelRoot(viewModel: VolumePanelViewModel, modifier: Modifier = Modifi
     val state: VolumePanelState by viewModel.volumePanelState.collectAsStateWithLifecycle()
     val components by viewModel.componentsLayout.collectAsStateWithLifecycle()
 
-    with(VolumePanelComposeScope(state)) {
-        components?.let { componentsState ->
-            Components(
-                componentsState,
-                modifier
-                    .sysuiResTag(VolumePanelTestTag)
-                    .semantics { paneTitle = accessibilityTitle }
-                    .padding(start = padding, top = padding, end = padding, bottom = 20.dp),
-            )
+    val gradient = rememberVolumeGradient()
+    val direction = LocalLayoutDirection.current
+    val brush = remember(gradient, direction) {
+        gradient?.let {
+            val colors = if (direction == LayoutDirection.Rtl) listOf(it.endColor, it.startColor)
+                else listOf(it.startColor, it.endColor)
+            Brush.horizontalGradient(colors)
+        }
+    }
+    CompositionLocalProvider(
+        LocalVolumeAccentBrush provides brush, LocalPanelGradientBrush provides brush,
+        LocalPanelGradientEnd provides (gradient?.endColor ?: Color.Unspecified),
+    ) {
+        with(VolumePanelComposeScope(state)) {
+            components?.let { componentsState ->
+                Components(
+                    componentsState,
+                    modifier
+                        .sysuiResTag(VolumePanelTestTag)
+                        .semantics { paneTitle = accessibilityTitle }
+                        .padding(start = padding, top = padding, end = padding, bottom = 20.dp),
+                )
+            }
         }
     }
 }

@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.android.systemui.axion.volume.domain.model.AxionRingerMode
+import com.android.systemui.axion.volume.ui.composable.LocalVolumeFillBrush
 import com.android.systemui.axion.volume.ui.viewmodel.AxionVolumeDialogViewModel
 
 @Composable
@@ -110,7 +111,7 @@ private fun LunarisRingerModeButton(
             .size(40.dp)
             .scale(scale)
             .clip(CircleShape)
-            .background(containerColor)
+            .lunarisButtonBackground(containerColor, selected = isSelected)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -142,11 +143,17 @@ fun LunarisCollapsedRingerButton(
             modifier = Modifier
                 .padding(8.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
+                .lunarisButtonBackground(MaterialTheme.colorScheme.primary)
                 .padding(8.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(imageVector = icon, contentDescription = "Ringer: ${ringerMode.name}", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
         }
     }
+}
+
+@Composable
+internal fun Modifier.lunarisButtonBackground(color: Color, selected: Boolean = true): Modifier {
+    val brush = LocalVolumeFillBrush.current
+    return if (selected && brush != null) background(brush) else background(color)
 }

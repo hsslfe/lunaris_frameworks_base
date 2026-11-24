@@ -44,9 +44,9 @@ constructor(
         val buttonComponent: ComposeVolumePanelUiComponent =
             remember(shouldUsePopup) {
                 if (shouldUsePopup) {
-                    ButtonComponent(viewModel.spatialAudioButton, popup::show)
+                    ButtonComponent(viewModel.spatialAudioButton, useVolumeGradient = true, onClick = popup::show)
                 } else {
-                    ToggleButtonComponent(viewModel.spatialAudioButton) {
+                    ToggleButtonComponent(viewModel.spatialAudioButton, useVolumeGradient = true) {
                         if (it) {
                             viewModel.setEnabled(SpatialAudioEnabledModel.SpatialAudioEnabled)
                         } else {

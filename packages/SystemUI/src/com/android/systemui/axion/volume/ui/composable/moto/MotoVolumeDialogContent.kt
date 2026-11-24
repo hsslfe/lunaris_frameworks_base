@@ -377,7 +377,7 @@ private fun MotoExpandedPanel(
                     ),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp),
                 ) {
-                    Text(stringResource(R.string.quick_settings_done))
+                    Text(stringResource(R.string.quick_settings_done), modifier = Modifier)
                 }
                 IconButton(onClick = viewModel::onSoundSettingsClick) {
                     Icon(
