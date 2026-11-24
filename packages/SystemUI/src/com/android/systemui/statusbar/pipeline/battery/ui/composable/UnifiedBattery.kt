@@ -21,6 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +66,7 @@ import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.phone.domain.interactor.IsAreaDark
 import com.android.systemui.statusbar.pipeline.battery.data.repository.BatteryRepository
+import com.android.systemui.statusbar.pipeline.battery.data.repository.NeonRingOptions
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryColors
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryFrame
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryGlyph
@@ -190,6 +192,11 @@ fun UnifiedBattery(
 
     BatteryLayout(
         attribution = viewModel.attribution,
+        ringOptions = if (viewModel.batteryIconStyle == BatteryRepository.ICON_STYLE_NEON_RING) {
+            viewModel.interactor.neonRingOptions.collectAsState(initial = NeonRingOptions()).value
+        } else {
+            NeonRingOptions()
+        },
         iconStyleProvider = { viewModel.batteryIconStyle },
         levelProvider = { viewModel.level },
         showLevelProvider = { viewModel.isBatteryPercentInsideIconSettingEnabled },
@@ -217,6 +224,7 @@ fun BatteryLayout(
     colorsProvider: () -> BatteryColors,
     modifier: Modifier,
     contentDescription: String = "",
+    ringOptions: NeonRingOptions = NeonRingOptions(),
 ) {
     Layout(
         content = {
@@ -237,6 +245,16 @@ fun BatteryLayout(
                 CircleBatteryBody(
                     attr = attribution,
                     iconStyleProvider = iconStyleProvider,
+                    levelProvider = levelProvider,
+                    showLevelProvider = showLevelProvider,
+                    colorsProvider = colorsProvider,
+                    modifier = Modifier.layoutId(BatteryMeasurePolicy.LayoutId.FrameCircle),
+                    contentDescription = contentDescription,
+                )
+            } else if (iconStyle == BatteryRepository.ICON_STYLE_NEON_RING) {
+                NeonRingBattery(
+                    prefs = ringOptions,
+                    attr = attribution,
                     levelProvider = levelProvider,
                     showLevelProvider = showLevelProvider,
                     colorsProvider = colorsProvider,

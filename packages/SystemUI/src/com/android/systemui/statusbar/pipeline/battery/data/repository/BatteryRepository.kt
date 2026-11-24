@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -56,6 +57,8 @@ import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.suspendCancellableCoroutine
 import lineageos.providers.LineageSettings
+
+data class NeonRingOptions(val colorMode: Int = 0, val chargingSpark: Boolean = true)
 
 /** Repository-style state for battery information. */
 interface BatteryRepository {
@@ -88,6 +91,8 @@ interface BatteryRepository {
      */
     val batteryIconStyle: StateFlow<Int>
 
+    val neonRingOptions: Flow<NeonRingOptions>
+
     /**
      * [LineageSettings.System.STATUS_BAR_SHOW_BATTERY_PERCENT]. A user setting to indicate whether
      * we should show the battery percentage in the home screen status bar
@@ -106,6 +111,7 @@ interface BatteryRepository {
         const val ICON_STYLE_TEXT = 2
         const val ICON_STYLE_CIRCLE_DOTTED = 3
         const val ICON_STYLE_THEMED = 4
+        const val ICON_STYLE_NEON_RING = 5
         const val SHOW_PERCENT_HIDDEN = 0
         const val SHOW_PERCENT_INSIDE = 1
         const val SHOW_PERCENT_NEXT_TO = 2
@@ -329,8 +335,19 @@ constructor(
             awaitClose { resolver.unregisterContentObserver(observer) }
         }
 
+    private val neonRingEnabled = settingsRepository.boolSetting("status_bar_battery_neon_ring")
+        .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
+    override val neonRingOptions = combine(
+        settingsRepository.intSetting("status_bar_battery_ring_color"),
+        settingsRepository.boolSetting("status_bar_battery_ring_spark", true),
+    ) { color, spark -> NeonRingOptions(color, spark) }
+
     override val batteryIconStyle =
-        merge(batteryStyleSettingsFlow, configurationController.onThemeChanged.map { readBatteryIconStyle(context) })
+        combine(
+            merge(batteryStyleSettingsFlow, configurationController.onThemeChanged.map { readBatteryIconStyle(context) }),
+            neonRingEnabled,
+        ) { style, ring -> if (ring) BatteryRepository.ICON_STYLE_NEON_RING else style }
             .distinctUntilChanged()
             .flowOn(bgDispatcher)
             .stateIn(
@@ -340,7 +357,7 @@ constructor(
             )
 
     override val showBatteryPercentMode =
-        callbackFlow {
+        callbackFlow<Pair<Int, Int>> {
                 val resolver = context.contentResolver
                 val uris =
                     listOf(
@@ -352,7 +369,7 @@ constructor(
                         ),
                     )
 
-                fun readMode(): Int {
+                fun readMode(): Pair<Int, Int> {
                     val iconStyle =
                         LineageSettings.System.getIntForUser(
                             resolver,
@@ -360,16 +377,14 @@ constructor(
                             BatteryRepository.ICON_STYLE_DEFAULT,
                             UserHandle.USER_CURRENT,
                         )
-                    return if (iconStyle == BatteryRepository.ICON_STYLE_TEXT) {
-                        BatteryRepository.SHOW_PERCENT_NEXT_TO
-                    } else {
+                    val mode =
                         LineageSettings.System.getIntForUser(
                             resolver,
                             LineageSettings.System.STATUS_BAR_SHOW_BATTERY_PERCENT,
                             BatteryRepository.SHOW_PERCENT_HIDDEN,
                             UserHandle.USER_CURRENT,
                         )
-                    }
+                    return Pair(iconStyle, mode)
                 }
 
                 val observer =
@@ -392,6 +407,13 @@ constructor(
                 trySend(readMode())
 
                 awaitClose { resolver.unregisterContentObserver(observer) }
+            }
+            .combine(neonRingEnabled) { (style, mode), ring ->
+                if (!ring && style == BatteryRepository.ICON_STYLE_TEXT) {
+                    BatteryRepository.SHOW_PERCENT_NEXT_TO
+                } else {
+                    mode
+                }
             }
             .flowOn(bgDispatcher)
             .distinctUntilChanged()
