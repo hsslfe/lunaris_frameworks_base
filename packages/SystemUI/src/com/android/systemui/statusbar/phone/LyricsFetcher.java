@@ -106,6 +106,9 @@ public class LyricsFetcher {
     private boolean mStarted;
 
     private MediaController mActiveController;
+        public MediaController getActiveController() {
+        return mActiveController;
+    }
     private final MediaController.Callback mControllerCallback = new MediaController.Callback() {
         @Override
         public void onPlaybackStateChanged(PlaybackState state) {
