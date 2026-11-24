@@ -23,6 +23,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 
 @SysUISingleton
 class AxDynamicBarChipsRefiner @Inject constructor(
@@ -32,9 +33,11 @@ class AxDynamicBarChipsRefiner @Inject constructor(
     private val _chipsFlow = MutableStateFlow(MultipleOngoingActivityChipsModel())
     val chipsFlow: StateFlow<MultipleOngoingActivityChipsModel> = _chipsFlow.asStateFlow()
 
+    override val invalidations = settings.isStatusBarEnabled.map { Unit }
+
     override fun transform(input: MultipleOngoingActivityChipsModel): MultipleOngoingActivityChipsModel {
         _chipsFlow.value = input
-        if (!settings.isEnabled.value) return input
+        if (!settings.isStatusBarEnabled.value) return input
 
         return input.copy(
             active = input.active.map { chip -> chip.copy(isHidden = true) },

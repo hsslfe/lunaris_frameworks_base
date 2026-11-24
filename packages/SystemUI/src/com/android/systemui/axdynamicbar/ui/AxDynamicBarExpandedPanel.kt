@@ -106,7 +106,7 @@ constructor(
             viewModel.isExpanded,
             viewModel.interactor.uiState.map { it.notificationAlert != null }.distinctUntilChanged(),
             viewModel.isOnKeyguard,
-            viewModel.interactor.settings.isEnabled,
+            viewModel.interactor.settings.isStatusBarEnabled,
         ) { expanded, hasAlert, onKeyguard, enabled ->
             val allowed = enabled && !onKeyguard
             OverlayState(

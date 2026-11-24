@@ -51,6 +51,7 @@ import android.view.animation.Interpolator;
 import com.android.app.animation.Interpolators;
 import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.internal.policy.SystemBarUtils;
+import com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 
@@ -67,7 +68,6 @@ final class MistDropHeadsUpAnimator {
     static final String KEY_EXIT = "lunaris_heads_up_drop_exit";
     static final String KEY_SPEED = "lunaris_heads_up_drop_speed";
     static final String KEY_STYLE = "lunaris_heads_up_drop_style";
-    private static final String KEY_DYNAMIC_BAR = "ax_dynamic_bar_enabled";
 
     static final int ORIGIN_AUTO = 0;
     static final int ORIGIN_CUTOUT = 1;
@@ -351,7 +351,8 @@ final class MistDropHeadsUpAnimator {
             }
         } catch (Exception ignored) {
         }
-        return readSecure(cr, KEY_DYNAMIC_BAR, 0) != 0;
+        return readSecure(cr, AxDynamicBarSettings.KEY_ENABLED, 0) != 0
+                && readSecure(cr, AxDynamicBarSettings.KEY_STATUS_BAR_ENABLED, 1) != 0;
     }
 
     private RectF findTopCutout(View root) {

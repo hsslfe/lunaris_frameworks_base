@@ -17,6 +17,8 @@
 package com.android.systemui.statusbar.chips.ui.viewmodel
 
 import com.android.systemui.statusbar.chips.ui.model.MultipleOngoingActivityChipsModel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * An [OngoingActivityChipsRefiner] takes the entire set of chips produced by the
@@ -24,5 +26,9 @@ import com.android.systemui.statusbar.chips.ui.model.MultipleOngoingActivityChip
  * chips.
  */
 interface OngoingActivityChipsRefiner {
+    /** Emits when the transform should be reapplied to the current chips. */
+    val invalidations: Flow<Unit>
+        get() = flowOf(Unit)
+
     fun transform(input: MultipleOngoingActivityChipsModel): MultipleOngoingActivityChipsModel
 }

@@ -282,7 +282,7 @@ constructor(
      * A flow modeling the active and inactive chips as well as which should be shown in the status
      * bar after accounting for possibly multiple ongoing activities and animation requirements.
      */
-    private val unrefinedChips =
+    private val unrefinedChips: Flow<MultipleOngoingActivityChipsModel> =
         if (StatusBarChipsModernization.isEnabled) {
             combine(
                 incomingChipBundle.map { bundle -> rankChips(bundle) },
@@ -321,13 +321,11 @@ constructor(
         }
 
     val chips: StateFlow<MultipleOngoingActivityChipsModel> =
-        unrefinedChips
-            .map { unrefinedChips ->
-                chipsRefiners.fold(unrefinedChips) { currentOutput, refiner ->
-                    refiner.transform(currentOutput)
-                }
+        chipsRefiners.fold(unrefinedChips) { chips, refiner ->
+            combine(chips, refiner.invalidations) { currentChips, _ ->
+                refiner.transform(currentChips)
             }
-            .stateIn(scope, SharingStarted.Lazily, MultipleOngoingActivityChipsModel())
+        }.stateIn(scope, SharingStarted.Lazily, MultipleOngoingActivityChipsModel())
 
     /**
      * A flow modeling the primary chip that should be shown in the status bar after accounting for
