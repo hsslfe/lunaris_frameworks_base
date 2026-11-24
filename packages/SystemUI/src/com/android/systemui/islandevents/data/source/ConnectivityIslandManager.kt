@@ -81,6 +81,8 @@ constructor(
                 if (!enabled) {
                     previousBtAddresses.clear()
                     clearBluetooth()
+                } else {
+                    onBluetoothDevicesChanged()
                 }
             }
 
@@ -318,8 +320,9 @@ constructor(
         if (btListening) return
         btListening = true
         previousBtAddresses.clear()
-        bluetoothController.connectedDevices.forEach { previousBtAddresses.add(it.getAddress()) }
         bluetoothController.addCallback(bluetoothCallback)
+        // Restore devices already connected when SystemUI starts listening.
+        bluetoothCallback.onBluetoothStateChange(bluetoothController.isBluetoothEnabled)
     }
 
     fun stopBluetooth() {
