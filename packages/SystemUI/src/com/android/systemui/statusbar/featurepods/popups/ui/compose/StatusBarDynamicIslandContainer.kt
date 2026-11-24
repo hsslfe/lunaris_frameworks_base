@@ -72,6 +72,7 @@ import com.android.systemui.statusbar.featurepods.popups.data.repository.Lunaris
 import com.android.systemui.statusbar.featurepods.popups.ui.model.PopupChipId
 import com.android.systemui.statusbar.featurepods.popups.ui.model.PopupChipModel
 import com.android.systemui.statusbar.featurepods.popups.ui.model.PopupContentModel
+import com.android.systemui.statusbar.featurepods.popups.ui.model.SystemEventKind
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -211,8 +212,14 @@ private fun LunarisBarContainer(
             } else {
                 currentChipIds.lastOrNull { it !in knownChipIds }
             }
+        val newUnlockChipId =
+            chips.firstOrNull {
+                it.chipId !in knownChipIds &&
+                    (it.popupContent as? PopupContentModel.SystemEvent)?.kind == SystemEventKind.Unlock
+            }?.chipId
         selectedChipId =
             when {
+                newUnlockChipId != null -> newUnlockChipId
                 newestChipId != null -> newestChipId
                 chips.any { it.chipId == selectedChipId } -> selectedChipId
                 else -> chips.firstOrNull()?.chipId
@@ -235,7 +242,7 @@ private fun LunarisBarContainer(
         if (currentChipIds != knownChipIds || hasMediaRequest) {
             mediaArrival = hasMediaRequest
         }
-        if (hasMediaRequest) {
+        if (hasMediaRequest && newUnlockChipId == null) {
             selectedChipId = PopupChipId.MediaControl
             squishTrigger++
         }
@@ -248,7 +255,28 @@ private fun LunarisBarContainer(
 
     LaunchedEffect(shownChip) {
         if (shownChip != null) {
-            if (popupAnchorChip == null) {
+            val isUnlock =
+                (shownChip.popupContent as? PopupContentModel.SystemEvent)?.kind ==
+                    SystemEventKind.Unlock
+            if (isUnlock && popupAnchorChip?.chipId != shownChip.chipId) {
+                // The lockscreen handoff may leave a side chip or stale main-chip
+                // bounds. Preserve the vertical anchor, but resolve X from the
+                // status-bar window rather than whichever chip was laid out last.
+                val bounds = mainChipBounds
+                popupOriginBounds =
+                    if (bounds != null && !bounds.isEmpty && displayCutout.windowWidthPx > 0) {
+                        val location = IntArray(2)
+                        view.rootView.getLocationOnScreen(location)
+                        val centerX = location[0] + displayCutout.windowWidthPx / 2f
+                        Rect(
+                            centerX - bounds.width / 2f,
+                            bounds.top,
+                            centerX + bounds.width / 2f,
+                            bounds.bottom,
+                        )
+                    } else null // All popup motion styles fall back to the window center.
+                selectedChipId = shownChip.chipId
+            } else if (popupAnchorChip == null) {
                 val fromPeek = shownChip.chipId != selectedChipId
                 popupOriginBounds =
                     if (fromPeek && companionChipBounds != null) companionChipBounds

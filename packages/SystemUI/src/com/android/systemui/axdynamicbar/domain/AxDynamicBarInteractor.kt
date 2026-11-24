@@ -368,8 +368,13 @@ constructor(
                 if (musicOnEntryIndex >= 0) {
                     prioritizeMusicOnKeyguardEntry = false
                 }
+                // A successful biometric unlock is a short-lived foreground event.
+                // Do not let an existing music card or an unrelated new event
+                // leave its unlock feedback relegated to a secondary chip.
+                val unlockIndex = events.indexOfFirst { it is IslandEvent.BiometricUnlock }
                 val pinnedIndex =
                     when {
+                        unlockIndex >= 0 -> unlockIndex
                         // Music is the initial Now Bar card when opening the lockscreen;
                         // later activity updates and swipe choices keep their own priority.
                         musicOnEntryIndex >= 0 -> musicOnEntryIndex
