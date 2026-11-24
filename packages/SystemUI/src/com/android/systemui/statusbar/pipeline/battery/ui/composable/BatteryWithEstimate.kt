@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.statusbar.phone.domain.interactor.IsAreaDark
+import com.android.systemui.statusbar.pipeline.battery.data.repository.BatteryRepository
 import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.BatteryViewModel
 
 @Composable
@@ -49,6 +50,12 @@ fun BatteryWithEstimate(
             BatteryViewModel.getStatusBarBatteryHeight(LocalContext.current).toDp()
         }
 
+    val iconHeight = if (viewModel.batteryIconStyle == BatteryRepository.ICON_STYLE_NEON_RING) {
+        batteryHeight * NEON_RING_SCALE
+    } else {
+        batteryHeight
+    }
+
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -58,7 +65,7 @@ fun BatteryWithEstimate(
             UnifiedBattery(
                 viewModel = viewModel,
                 isDarkProvider = isDarkProvider,
-                modifier = Modifier.height(batteryHeight).align(Alignment.CenterVertically),
+                modifier = Modifier.height(iconHeight).align(Alignment.CenterVertically),
             )
         }
         if (showEstimate) {
