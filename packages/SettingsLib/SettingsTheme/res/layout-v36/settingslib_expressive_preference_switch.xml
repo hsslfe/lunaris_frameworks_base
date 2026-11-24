@@ -15,7 +15,7 @@
     limitations under the License.
   -->
 
-<com.google.android.material.materialswitch.MaterialSwitch
+<com.android.settingslib.widget.SwitchThumbIconSwitch
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:theme="@style/Theme.Material3.DynamicColors.DayNight"
     android:id="@+id/switchWidget"
