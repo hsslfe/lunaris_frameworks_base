@@ -2,6 +2,7 @@ package com.android.systemui.axdynamicbar.ui.compose
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.LaunchedEffect
@@ -11,8 +12,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -35,6 +34,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -85,25 +86,77 @@ fun AxDynamicBarNowBar(
     state: AxDynamicBarChipState?,
     viewModel: AxDynamicBarChipViewModel,
 ) {
+    val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
+    var pressed by remember { mutableStateOf(false) }
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val motionScheme = MaterialTheme.motionScheme
+    val isOnKeyguard by viewModel.isOnKeyguard.collectAsStateWithLifecycle()
+    val statusBarEnabled by viewModel.interactor.settings.isStatusBarEnabled.collectAsStateWithLifecycle()
 
     AnimatedVisibility(
-        visible = state != null,
+        // The lockscreen has its own Now Bar host. Never draw a second copy in
+        // the status-bar slot while that host is visible or being expanded.
+        visible = state != null && statusBarEnabled && !isOnKeyguard,
+        modifier = Modifier
+            .pillPressMotion(pressed)
+            .pointerInput(viewModel, touchSlop, state?.event?.id) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    pressed = true
+                    try {
+                        var isDragging = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val dx = change.position.x - down.position.x
+                            val dy = change.position.y - down.position.y
+                            if (!change.pressed) {
+                                if (!change.isConsumed && state != null) {
+                                    change.consume()
+                                    if (isDragging) {
+                                        swipe.cycle(previous = dx > 0f)
+                                    } else {
+                                        if (viewModel.chipTapClosesPanel(down.uptimeMillis)) {
+                                            viewModel.statusBarExpansion.collapse()
+                                        } else {
+                                            viewModel.statusBarExpansion.expand()
+                                        }
+                                    }
+                                }
+                                break
+                            }
+                            if (change.isConsumed && !isDragging) break
+                            if (!isDragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                                if (abs(dy) >= abs(dx)) break
+                                pressed = false
+                                isDragging = true
+                            }
+                            if (isDragging) {
+                                swipe.drag(dx, touchSlop)
+                                change.consume()
+                            }
+                        }
+                    } finally {
+                        swipe.release()
+                        pressed = false
+                    }
+                }
+            }
+            .pillSwipeMotion(swipe),
         enter = slideInVertically(motionScheme.defaultSpatialSpec()) { -it } + fadeIn(motionScheme.defaultEffectsSpec()),
-        exit = slideOutVertically(motionScheme.fastSpatialSpec()) { -it } + fadeOut(motionScheme.fastEffectsSpec()),
+        exit = if (isOnKeyguard) ExitTransition.None else
+            slideOutVertically(motionScheme.fastSpatialSpec()) { -it } + fadeOut(motionScheme.fastEffectsSpec()),
     ) {
         state?.let { chipState ->
             val displayEvent = chipState.notificationAlert ?: chipState.event
             val isAlert = chipState.notificationAlert != null
 
             AnimatedContent(
-                targetState = NowBarDisplay(displayEvent, isAlert),
+                targetState = PillDisplay(displayEvent, isAlert),
                 transitionSpec = {
-                    (fadeIn(motionScheme.defaultEffectsSpec()) + scaleIn(initialScale = 0.92f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
-                        (fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.92f, animationSpec = motionScheme.fastSpatialSpec()))
+                    pillEventTransition(swipe.direction(initialState.event, targetState.event, chipState.allEvents))
                 },
-                contentKey = { if (it.isAlert) "alert" else it.event::class.simpleName },
+                contentKey = { it.event.id to it.isAlert },
                 label = "nowbar_event",
             ) { display ->
                 var targetWidthPx by remember { mutableIntStateOf(0) }
@@ -133,42 +186,7 @@ fun AxDynamicBarNowBar(
 
                 Box(
                     modifier = Modifier
-                        .padding(top = SpaceXs)
-                        .pointerInput(viewModel, touchSlop, state?.event?.id) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown()
-                                var isDragging = false
-                                var canceled = false
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                    val dx = change.position.x - down.position.x
-                                    val dy = change.position.y - down.position.y
-                                    if (!change.pressed) {
-                                        if (!canceled && !change.isConsumed && state != null) {
-                                            change.consume()
-                                            if (isDragging) {
-                                                if (dx > 0f) viewModel.cyclePrev()
-                                                else viewModel.cycleNext()
-                                            } else {
-                                                if (viewModel.chipTapClosesPanel(down.uptimeMillis)) {
-                                                    viewModel.statusBarExpansion.collapse()
-                                                } else {
-                                                    viewModel.statusBarExpansion.expand()
-                                                }
-                                            }
-                                        }
-                                        break
-                                    }
-                                    if (change.isConsumed && !isDragging) { canceled = true; break }
-                                    if (!isDragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
-                                        if (abs(dy) >= abs(dx)) break
-                                        isDragging = true
-                                    }
-                                    if (isDragging) change.consume()
-                                }
-                            }
-                        },
+                        .padding(top = SpaceXs),
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
@@ -318,5 +336,5 @@ private fun NowBarDots(count: Int, activeIndex: Int, color: Color) {
     }
 }
 
-private data class NowBarDisplay(val event: IslandEvent, val isAlert: Boolean)
+internal data class PillDisplay(val event: IslandEvent, val isAlert: Boolean)
 

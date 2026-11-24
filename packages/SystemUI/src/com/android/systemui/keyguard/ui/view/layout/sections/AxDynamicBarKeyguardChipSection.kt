@@ -14,11 +14,10 @@ import com.android.internal.policy.SystemBarUtils
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
 import com.android.systemui.axdynamicbar.ui.compose.AxDynamicBarKeyguardChip
 import com.android.systemui.islandevents.model.IslandEvent
-import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
-import com.android.systemui.keyguard.shared.model.ClockSize
 import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.media.MediaViewController
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockViewIds
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.KeyguardIndicationController
@@ -27,7 +26,6 @@ import com.android.systemui.util.WallpaperDepthUtils
 import javax.inject.Inject
 import org.lunaris.extrainfowidgets.ExtraInfoFreeformView
 import kotlinx.coroutines.DisposableHandle
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -37,8 +35,7 @@ private const val EXPANDED_TOP_PROTECTION_DP = 16f
 private const val EXPANDED_BOTTOM_PROTECTION_DP = 16f
 private const val UNSET = -1
 
-private const val HIDDEN_VIEWS_FADE_DURATION_START_MS = 50L
-private const val HIDDEN_VIEWS_FADE_DURATION_END_MS = 250L
+private const val HIDDEN_VIEWS_FADE_DURATION_START_MS = 145L
 
 private fun extraBottomMarginPx(context: Context): Int =
     context.resources.getDimensionPixelSize(
@@ -51,6 +48,10 @@ private val HIDDEN_VIEW_IDS =
         R.id.default_weather_image,
         R.id.default_weather_text,
         R.id.clock_ls,
+        R.id.lockscreen_clock_view,
+        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE,
+        R.id.keyguard_independent_info_widgets,
         R.id.keyguard_info_widgets,
         R.id.keyguard_widgets,
         R.id.shared_notification_container,
@@ -74,7 +75,6 @@ constructor(
     @ShadeDisplayAware private val context: Context,
     private val viewModel: AxDynamicBarChipViewModel,
     private val indicationController: KeyguardIndicationController,
-    private val clockInteractor: KeyguardClockInteractor,
 ) : KeyguardSection() {
 
     private val chipViewId = R.id.ax_dynamic_bar_keyguard_chip
@@ -86,7 +86,7 @@ constructor(
     // While the collapsed Now Bar's expanded content fades away, keep the
     // native host anchored in its expanded slot. Reposition only once Compose
     // signals that the exit transition has fully settled.
-    private var nowBarExitPending = false
+    private var expandedExitPending = false
 
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
@@ -151,8 +151,8 @@ constructor(
                                 // Complete the exit atomically: restoring the
                                 // wallpaper or other lockscreen layers earlier
                                 // makes the whole display flash while music fades.
-                                if (nowBarExitPending) {
-                                    nowBarExitPending = false
+                                if (expandedExitPending) {
+                                    expandedExitPending = false
                                     rebindPreDrawAction(constraintLayout, false)
                                     WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
                                     constraintLayout.requireViewById<View>(dismissViewId)
@@ -162,17 +162,6 @@ constructor(
                                 }
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
-                            }
-                        }
-                    }
-                    scope.launch {
-                        viewModel.isKeyguardExpanded.collectLatest { expanded ->
-                            if (expanded) {
-                                clockInteractor.clockSize.collect { size ->
-                                    if (size != ClockSize.SMALL) {
-                                        clockInteractor.setClockSize(ClockSize.SMALL)
-                                    }
-                                }
                             }
                         }
                     }
@@ -187,7 +176,7 @@ constructor(
                                 // A track change may briefly clear chipState.
                                 // Keep the media backdrop stable until the
                                 // actual expanded exit has finished.
-                                if (expandedMusicOpen || !nowBarExitPending) {
+                                if (expandedMusicOpen || !expandedExitPending) {
                                     MediaViewController.getOrNull()
                                         ?.setExpandedMusicOpen(expandedMusicOpen)
                                 }
@@ -205,7 +194,7 @@ constructor(
                         }
                             .distinctUntilChanged()
                             .collect { (expanded, lowUdfps, _) ->
-                                if (!expanded && !nowBarExitPending) {
+                                if (!expanded && !expandedExitPending) {
                                     // Raise/UD FPS updates remain immediate when
                                     // fully collapsed, but must not move an exiting
                                     // expanded panel before its fade is complete.
@@ -241,29 +230,27 @@ constructor(
         expanded: Boolean,
         lowUdfps: Boolean,
     ) {
-        if (expanded && (viewModel.nowBarAppearance.value.enabled ||
-                (viewModel.isKeyguardMusicPillEnabled.value &&
-                    viewModel.chipState.value?.event is IslandEvent.Media))) {
-            nowBarExitPending = true
-        } else if (!expanded && nowBarExitPending) {
+        if (expanded) {
+            expandedExitPending = true
+        } else if (!expanded && expandedExitPending) {
             // The Compose expanded panel is still fading away. Do not change
             // wallpaper depth, pre-draw suppression or parent constraints yet.
             // The collapseSettled callback restores all of them together.
             return
         }
+        // Hide all competing lockscreen layers before the expanded host is
+        // resized. A deferred 250 ms fade lets the card overlap visible widgets.
+        if (expanded) setHiddenViewsVisibility(constraintLayout, View.INVISIBLE)
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
         rebindPreDrawAction(constraintLayout, expanded)
         TransitionManager.endTransitions(constraintLayout)
         constraintLayout.requireViewById<View>(dismissViewId).visibility =
             if (expanded) View.VISIBLE else View.GONE
         if (!expanded && !viewModel.keyguardExpansion.canShow.value &&
-            !nowBarExitPending) {
+            !expandedExitPending) {
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
-        if (expanded) {
-            setHiddenViewsVisibility(constraintLayout, View.INVISIBLE)
-            applyExpandedLp(composeView)
-        }
+        if (expanded) applyExpandedLp(composeView)
     }
 
     private fun rebindPreDrawAction(constraintLayout: ConstraintLayout, expanded: Boolean) {
@@ -277,6 +264,7 @@ constructor(
 
     private fun hiddenTargets(constraintLayout: ConstraintLayout): List<View> =
         HIDDEN_VIEW_IDS.mapNotNull { constraintLayout.rootView.findViewById<View>(it) }
+            .distinct()
 
     private fun setIndependentWidgetsSuppressed(constraintLayout: ConstraintLayout, suppressed: Boolean) {
         constraintLayout.findViewById<ExtraInfoFreeformView>(R.id.keyguard_independent_info_widgets)
@@ -304,16 +292,13 @@ constructor(
             }
             hiddenViews.clear()
         } else {
+            // No fading live clock or widget can paint over the expanding card.
+            // Restore them with a short fade only after collapse has settled.
             hiddenTargets(constraintLayout).filter { it.visibility == View.VISIBLE }.forEach { v ->
                 hiddenViews.add(v)
                 v.animate().cancel()
-                v.animate()
-                    .alpha(0f)
-                    .setDuration(HIDDEN_VIEWS_FADE_DURATION_END_MS)
-                    .withEndAction {
-                        if (v.visibility == View.VISIBLE) v.visibility = visibility
-                    }
-                    .start()
+                v.alpha = 0f
+                v.visibility = visibility
             }
         }
         WallpaperDepthUtils.get()?.let {
@@ -327,6 +312,8 @@ constructor(
         hiddenTargets(constraintLayout).forEach { v ->
             if (v.visibility == View.VISIBLE) {
                 hiddenViews.add(v)
+                v.animate().cancel()
+                v.alpha = 0f
                 v.visibility = View.INVISIBLE
             }
         }
@@ -334,7 +321,7 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        val expanded = viewModel.isKeyguardExpanded.value || nowBarExitPending
+        val expanded = viewModel.isKeyguardExpanded.value || expandedExitPending
         val lowUdfps = viewModel.isLowUdfps.value
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         val chipAboveLockPx = CHIP_ABOVE_LOCK_MARGIN_DP.dpToPx(context)
@@ -477,7 +464,7 @@ constructor(
     }
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
-        nowBarExitPending = false
+        expandedExitPending = false
         TransitionManager.endTransitions(constraintLayout)
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null

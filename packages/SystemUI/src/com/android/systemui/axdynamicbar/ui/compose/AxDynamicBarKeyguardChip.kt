@@ -23,7 +23,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.keyframes
 import kotlin.math.abs
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -31,6 +30,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.animation.fadeIn
@@ -46,6 +46,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -79,19 +81,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,7 +98,6 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.geometry.RoundRect
@@ -233,7 +228,6 @@ fun AxDynamicBarKeyguardChip(
         nowBarStyle.batteryMode == 1 && idleBatteryWakeReady &&
         !batteryInfo.isCharging && !hasNowBarActivity && !hasVisibleKeyguardText
 
-    val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
 
     Box(modifier = modifier) {
@@ -242,74 +236,62 @@ fun AxDynamicBarKeyguardChip(
         // null immediately. Keep the last expanded content through the exit
         // animation rather than collapsing an empty panel down to the pill.
         var lastExpandedState by remember { mutableStateOf<AxDynamicBarChipState?>(null) }
+        var collapsedHostReady by remember { mutableStateOf(true) }
+        LaunchedEffect(isKeyguardExpanded) {
+            if (isKeyguardExpanded) collapsedHostReady = false
+        }
         if (isKeyguardChipVisible && isKeyguardExpanded && state != null) {
             lastExpandedState = state
         }
-        val usePillTransition = nowBarStyle.enabled || (musicPillEnabled &&
-            (state?.event ?: lastExpandedState?.event) is IslandEvent.Media)
         val expandedVisibleState = remember { MutableTransitionState(false) }
         expandedVisibleState.targetState =
-            if (usePillTransition) {
-                // A track switch can briefly remove the media event. Keep the
-                // expanded content showing its last frame until the expansion
-                // controller's short media-gap grace period completes.
-                isKeyguardExpanded && (state != null || lastExpandedState != null)
-            } else {
-                isKeyguardChipVisible && isKeyguardExpanded && state != null
-            }
-        LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
-            if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+            isKeyguardExpanded && (state != null || lastExpandedState != null)
+        LaunchedEffect(isKeyguardExpanded, expandedVisibleState.isIdle, expandedVisibleState.currentState) {
+            if (!isKeyguardExpanded && expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
                 lastExpandedState = null
                 viewModel.keyguardExpansion.notifyCollapseSettled()
+                // Wait for the collapsed native anchor before drawing the pill.
+                withFrameNanos { }
+                if (!viewModel.keyguardExpansion.isExpanded.value) {
+                    collapsedHostReady = true
+                }
             }
         }
         AnimatedVisibility(
             visibleState = expandedVisibleState,
-            enter = fadeIn(motionScheme.defaultEffectsSpec()),
-            exit = if (usePillTransition)
-                fadeOut(tween(durationMillis = 220)) +
-                    scaleOut(targetScale = 0.97f, animationSpec = tween(durationMillis = 220))
-            else fadeOut(tween(durationMillis = 250)),
+            // The card owns its spring, fade and slide. Fading the entire
+            // full-screen host a second time causes a dim flash and lag.
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center),
         ) {
-            val expandedContentState = if (usePillTransition) {
-                state ?: lastExpandedState
-            } else if (expandedVisibleState.targetState) state else lastExpandedState
-            expandedContentState?.let {
-                // Retain the last expanded content only until the animation
-                // completes. Original Lunaris expanded UI remains unchanged.
+            (state ?: lastExpandedState)?.let {
                 KeyguardExpandedContent(
                     event = it.event,
                     allEvents = it.allEvents,
                     interactor = viewModel.interactor,
                     onCollapse = { viewModel.keyguardExpansion.collapse() },
                     hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
-                    stabilizeMediaArtwork = usePillTransition,
                 )
             }
         }
 
+        // Remove the pill from composition before its native host
+        // changes from wrap-content to full height. AnimatedVisibility with
+        // ExitTransition.None alone can retain a frame in the wrong location.
+        if (!isKeyguardExpanded && collapsedHostReady && expandedVisibleState.isIdle &&
+            !expandedVisibleState.currentState) {
+        val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
+        val pillVisibility = remember { MutableTransitionState(false) }
+        pillVisibility.targetState = isKeyguardChipVisible
         AnimatedVisibility(
-            visible = isKeyguardChipVisible && !isKeyguardExpanded &&
-                (!usePillTransition ||
-                    (expandedVisibleState.isIdle && !expandedVisibleState.currentState)),
-            // Avoid showing the collapsed pill under a still-fading expanded
-            // panel; show it only after the expanded exit has settled.
-            // The idle battery pill instantly yields to an indication and
-            // reappears as soon as its text clears. Real activity animations
-            // remain unchanged.
+            visibleState = pillVisibility,
             enter = if (showIdleBatteryOnly) EnterTransition.None else
-                fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
-                    scaleIn(
-                        initialScale = 0.9f,
-                        animationSpec = tween(durationMillis = 200, delayMillis = 300),
-                    ),
-            exit = if (nowBarStyle.enabled && !hasNowBarActivity)
-                ExitTransition.None else
-                fadeOut(motionScheme.fastEffectsSpec()) +
-                    scaleOut(targetScale = 0.9f, animationSpec = motionScheme.fastSpatialSpec()),
+                fadeIn(tween(110)) + scaleIn(initialScale = 0.86f,
+                    animationSpec = spring(dampingRatio = 0.69f, stiffness = 700f)),
+            exit = ExitTransition.None,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .pointerInput(viewModel, state?.event?.id) {
@@ -319,31 +301,36 @@ fun AxDynamicBarKeyguardChip(
                         var dragging = false
                         var totalDx = 0f
                         var canceled = false
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            val dx = change.position.x - start.x
-                            val dy = change.position.y - start.y
-                            if (!change.pressed) {
-                                if (dragging && !canceled && !change.isConsumed) {
-                                    change.consume()
-                                    if (totalDx > 0f) viewModel.cyclePrev()
-                                    else viewModel.cycleNext()
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                val dx = change.position.x - start.x
+                                val dy = change.position.y - start.y
+                                if (!change.pressed) {
+                                    if (dragging && !canceled && !change.isConsumed) {
+                                        change.consume()
+                                        swipe.cycle(previous = totalDx > 0f)
+                                    }
+                                    break
                                 }
-                                break
+                                if (change.isConsumed && !dragging) { canceled = true; break }
+                                if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                                    if (abs(dy) >= abs(dx)) break
+                                    dragging = true
+                                }
+                                if (dragging) {
+                                    totalDx = dx
+                                    swipe.drag(dx, touchSlop)
+                                    change.consume()
+                                }
                             }
-                            if (change.isConsumed && !dragging) { canceled = true; break }
-                            if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
-                                if (abs(dy) >= abs(dx)) break
-                                dragging = true
-                            }
-                            if (dragging) {
-                                totalDx = dx
-                                change.consume()
-                            }
+                        } finally {
+                            swipe.release()
                         }
                     }
-                },
+                }
+                .pillSwipeMotion(swipe),
         ) {
             val chipState = state
             if (nowBarStyle.enabled && !hasNowBarActivity) {
@@ -384,20 +371,13 @@ fun AxDynamicBarKeyguardChip(
                     return@AnimatedVisibility
                 }
 
-                AnimatedContent(
-                    targetState = displayEvent,
-                    transitionSpec = {
-                        (fadeIn(motionScheme.defaultEffectsSpec()) + scaleIn(
-                            initialScale = 0.95f,
-                            animationSpec = motionScheme.defaultSpatialSpec(),
-                        )) togetherWith (fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(
-                            targetScale = 0.95f,
-                            animationSpec = motionScheme.fastSpatialSpec(),
-                        )) using SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
-                    },
-                    contentKey = { it::class.simpleName },
-                    label = "keyguard_chip_event",
-                ) { event ->
+                SwipePageTransition(
+                    target = displayEvent,
+                    pageKey = displayEvent.id,
+                    travel = 14.dp,
+                    direction = { from, to -> swipe.direction(from, to, chipState.allEvents) },
+                    durationMillis = 245,
+                ) { event, pageMotion ->
                     val rawAccent = chipAccentColorFor(event)
                     val accent by animateColorAsState(
                         rawAccent,
@@ -465,6 +445,7 @@ fun AxDynamicBarKeyguardChip(
                                 isDozing = isDozing,
                                 batteryString = batteryString,
                                 aospChipExpandable = expandable,
+                                pageMotion = pageMotion,
                             )
                         }
                     }
@@ -477,6 +458,7 @@ fun AxDynamicBarKeyguardChip(
                     modifier,
                 )
             }
+        }
         }
     }
 }
@@ -495,12 +477,14 @@ private fun KeyguardChipBody(
     isDozing: Boolean = false,
     batteryString: String = "",
     aospChipExpandable: SystemUiExpandable,
+    pageMotion: Modifier,
 ) {
     val context = LocalContext.current
     val popupAnchor = LocalView.current
     val motionScheme = MaterialTheme.motionScheme
-    var toggleCount by remember { mutableIntStateOf(0) }
     val marqueeEnabled = LocalNowBarMarqueeEnabled.current
+    val pressInteractionSource = remember { MutableInteractionSource() }
+    val isPillPressed by pressInteractionSource.collectIsPressedAsState()
     val onPillClick: () -> Unit = {
         when (event) {
             is IslandEvent.Notification ->
@@ -509,9 +493,7 @@ private fun KeyguardChipBody(
                 viewModel.handleAospChipTap(event, aospChipExpandable)
             is IslandEvent.KeyguardIndication, is IslandEvent.AppSwitch -> Unit
             else -> {
-                val wasExpanded = viewModel.keyguardExpansion.isExpanded.value
                 viewModel.keyguardExpansion.toggle()
-                if (!wasExpanded) toggleCount++
             }
         }
     }
@@ -610,7 +592,10 @@ private fun KeyguardChipBody(
     // The host ConstraintLayout positions the entire collapsed Now Bar for
     // Raise. Offsetting only this child could draw outside the ComposeView and
     // clip its background, artwork and touch target.
-    Box(contentAlignment = Alignment.Center) {
+    Box(
+        modifier = Modifier.pillPressMotion(isPillPressed),
+        contentAlignment = Alignment.Center,
+    ) {
         if (!isDozing && (nowBarStyle == null || nowBarStyle.material == 1)) {
             Box(modifier = Modifier.matchParentSize()) {
                 AndroidView(
@@ -634,7 +619,8 @@ private fun KeyguardChipBody(
                 .shadow(styledShadow, styledShape)
                 .border(BorderStroke(styledStrokeWidth, styledStroke), styledShape)
                 .clip(styledShape)
-                .squishAnimation(toggleCount)
+                // Decoration remains clipped to the shape. The full classic
+                // pill, including blur and border, is animated at its parent.
                 .background(if (nowBarStyle == null) Color.Transparent else
                     styledColor.copy(alpha = nowBarStyle.opacity / 100f *
                         (if (nowBarStyle.material == 1) 0.24f else 1f)))
@@ -654,344 +640,353 @@ private fun KeyguardChipBody(
                 )
                 .then(
                     if (nowBarStyle != null) Modifier.combinedClickable(
+                        interactionSource = pressInteractionSource,
+                        indication = null,
                         onClick = onPillClick,
                         onLongClick = onPillLongClick,
-                    ) else Modifier.clickable(onClick = onPillClick)
+                    ) else Modifier.clickable(
+                        interactionSource = pressInteractionSource,
+                        indication = null,
+                        onClick = onPillClick,
+                    )
                 )
-                .padding(start = if (isMedia) SpaceMd else SpaceSm, end = SpaceMd),
+                .padding(start = if (isMedia) SpaceMd else SpaceSm, end = SpaceMd)
+                .then(pageMotion),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (nowBarStyle != null) Arrangement.Center else Arrangement.Start,
         ) {
-            if (nowBarStyle != null && event is IslandEvent.Charging) {
-                // Use the exact width of Android's native charging text.
-                // Center the whole icon + text group if it fits; otherwise the
-                // bolt remains at the left inset and text gets all remaining space.
-                BoxWithConstraints(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
-                    val iconGap = SpaceXs
-                    val textWidth = (maxWidth - iconSize - iconGap).coerceAtLeast(32.dp)
-                    val chargingLines = rememberChargingParts(batteryString)
-                    val title = chargingLines.firstOrNull() ?: "${event.level}%"
-                    val metrics = chargingLines.drop(1).joinToString(" · ")
-                    val textMeasurer = rememberTextMeasurer()
-                    val density = LocalDensity.current
-                    // PillPrimary reads Compose state. Resolve it in the
-                    // composable scope, not inside remember's non-composable
-                    // calculation lambda.
-                    val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
-                    val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
-                    val baseTextStyle = PillPrimary
-                    val titleStyle = baseTextStyle.copy(fontSize = titleSize.sp)
-                    val detailStyle = baseTextStyle.copy(fontSize = detailSize.sp)
-                    val requiredTextWidthPx = remember(
-                        title, metrics, textMeasurer, titleStyle, detailStyle,
+            key(event.id) {
+                if (nowBarStyle != null && event is IslandEvent.Charging) {
+                    // Use the exact width of Android's native charging text.
+                    // Center the whole icon + text group if it fits; otherwise the
+                    // bolt remains at the left inset and text gets all remaining space.
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        maxOf(
-                            textMeasurer.measure(
-                                text = title,
-                                style = titleStyle,
-                                maxLines = 1,
-                            ).size.width,
-                            if (metrics.isNotEmpty()) textMeasurer.measure(
-                                text = metrics,
-                                style = detailStyle,
-                                maxLines = 1,
-                            ).size.width else 0,
-                        )
+                        val iconSize = (nowBarStyle.height * 0.38f).coerceIn(16f, 28f).dp
+                        val iconGap = SpaceXs
+                        val textWidth = (maxWidth - iconSize - iconGap).coerceAtLeast(32.dp)
+                        val chargingLines = rememberChargingParts(batteryString)
+                        val title = chargingLines.firstOrNull() ?: "${event.level}%"
+                        val metrics = chargingLines.drop(1).joinToString(" · ")
+                        val textMeasurer = rememberTextMeasurer()
+                        val density = LocalDensity.current
+                        // PillPrimary reads Compose state. Resolve it in the
+                        // composable scope, not inside remember's non-composable
+                        // calculation lambda.
+                        val titleSize = (nowBarStyle.height * 0.24f).coerceIn(10f, 14f)
+                        val detailSize = (nowBarStyle.height * 0.19f).coerceIn(9f, 12f)
+                        val baseTextStyle = PillPrimary
+                        val titleStyle = baseTextStyle.copy(fontSize = titleSize.sp)
+                        val detailStyle = baseTextStyle.copy(fontSize = detailSize.sp)
+                        val requiredTextWidthPx = remember(
+                            title, metrics, textMeasurer, titleStyle, detailStyle,
+                        ) {
+                            maxOf(
+                                textMeasurer.measure(
+                                    text = title,
+                                    style = titleStyle,
+                                    maxLines = 1,
+                                ).size.width,
+                                if (metrics.isNotEmpty()) textMeasurer.measure(
+                                    text = metrics,
+                                    style = detailStyle,
+                                    maxLines = 1,
+                                ).size.width else 0,
+                            )
+                        }
+                        val requiredTextWidth = with(density) {
+                            (requiredTextWidthPx + 4).toDp()
+                        }
+                        val groupWidth = minOf(maxWidth,
+                            iconSize + iconGap + requiredTextWidth.coerceAtLeast(32.dp))
+                        Row(
+                            modifier = Modifier.width(groupWidth),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Start,
+                        ) {
+                            AnimatedChargingBoltIcon(styledContentColor, iconSize)
+                            Spacer(Modifier.width(iconGap))
+                            NowBarResponsiveChargingText(
+                                event = event,
+                                batteryString = batteryString,
+                                color = styledContentColor,
+                                heightDp = nowBarStyle.height,
+                                availableWidth = textWidth,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
-                    val requiredTextWidth = with(density) {
-                        (requiredTextWidthPx + 4).toDp()
+                } else if (event is IslandEvent.Media) {
+                    if (nowBarStyle?.art != 3) {
+                    val artworkFrame = rememberKeyguardMediaArtwork(event)
+                    AnimatedContent(
+                        targetState = artworkFrame,
+                        transitionSpec = {
+                            (fadeIn(motionScheme.defaultEffectsSpec()) +
+                                scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
+                                (fadeOut(motionScheme.fastEffectsSpec()) +
+                                    scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
+                                SizeTransform(clip = false)
+                        },
+                        contentKey = { "${it.trackId}|${it.drawable?.hashCode() ?: 0}" },
+                        label = "kg_media_icon",
+                    ) { frame ->
+                        val art = frame.drawable
+                        if (art != null) {
+                            Image(
+                                bitmap = art.toScaledBitmap(styledArtworkSize),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(styledArtworkSize)
+                                    .clip(styledArtShape),
+                                contentScale = ContentScale.Crop,
+                            )
+                        } else {
+                            PillEventIcon(event, tint = styledContentColor, animated = false)
+                        }
                     }
-                    val groupWidth = minOf(maxWidth,
-                        iconSize + iconGap + requiredTextWidth.coerceAtLeast(32.dp))
-                    Row(
-                        modifier = Modifier.width(groupWidth),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start,
-                    ) {
-                        AnimatedChargingBoltIcon(styledContentColor, iconSize)
-                        Spacer(Modifier.width(iconGap))
-                        NowBarResponsiveChargingText(
-                            event = event,
-                            batteryString = batteryString,
-                            color = styledContentColor,
-                            heightDp = nowBarStyle.height,
-                            availableWidth = textWidth,
-                            modifier = Modifier.weight(1f),
-                        )
+                    Spacer(Modifier.width(SpaceXs))
                     }
-                }
-            } else if (event is IslandEvent.Media) {
-                if (nowBarStyle?.art != 3) {
-                val artworkFrame = rememberKeyguardMediaArtwork(event)
-                AnimatedContent(
-                    targetState = artworkFrame,
-                    transitionSpec = {
-                        (fadeIn(motionScheme.defaultEffectsSpec()) +
-                            scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
-                            (fadeOut(motionScheme.fastEffectsSpec()) +
-                                scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
-                            SizeTransform(clip = false)
-                    },
-                    contentKey = { "${it.trackId}|${it.drawable?.hashCode() ?: 0}" },
-                    label = "kg_media_icon",
-                ) { frame ->
-                    val art = frame.drawable
-                    if (art != null) {
-                        Image(
-                            bitmap = art.toScaledBitmap(styledArtworkSize),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(styledArtworkSize)
-                                .clip(styledArtShape),
-                            contentScale = ContentScale.Crop,
-                        )
-                    } else {
-                        PillEventIcon(event, tint = styledContentColor, animated = false)
-                    }
-                }
-                Spacer(Modifier.width(SpaceXs))
-                }
-                AnimatedContent(
-                    targetState = event,
-                    transitionSpec = {
-                        (fadeIn(motionScheme.defaultEffectsSpec()) +
-                            scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
-                            (fadeOut(motionScheme.fastEffectsSpec()) +
-                                scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
-                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
-                    },
-                    contentKey = { "${it.track}|${it.artist}" },
-                    label = "kg_media_text",
-                    modifier = Modifier.weight(1f, fill = false),
-                ) { ev ->
-                    Column(
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.widthIn(max = nowBarTextMaxWidth).fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (nowBarStyle?.text == 0)
-                                listOf(ev.track, ev.artist).filter { it.isNotBlank() }.joinToString(" · ")
-                            else ev.track.ifEmpty { stringResource(R.string.ax_dynamic_bar_music) },
-                            style = PillPrimary.copy(
-                                fontSize = (LocalNowBarTextFontSp.current
-                                    ?: (nowBarStyle?.textSize ?: 13).toFloat()).sp,
-                            ),
-                            color = styledContentColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().then(
-                                if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
-                                else Modifier
-                            ),
-                        )
-                        if (ev.artist.isNotBlank() &&
-                            (nowBarStyle == null || nowBarStyle.text == 1)) {
+                    AnimatedContent(
+                        targetState = event,
+                        transitionSpec = {
+                            (fadeIn(motionScheme.defaultEffectsSpec()) +
+                                scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
+                                (fadeOut(motionScheme.fastEffectsSpec()) +
+                                    scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
+                                SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
+                        },
+                        contentKey = { "${it.track}|${it.artist}" },
+                        label = "kg_media_text",
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) { ev ->
+                        Column(
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.widthIn(max = nowBarTextMaxWidth).fillMaxWidth(),
+                        ) {
                             Text(
-                                ev.artist,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = ((LocalNowBarTextFontSp.current
-                                        ?: (nowBarStyle?.textSize ?: 13).toFloat()) - 1f).sp),
-                                color = styledContentColor.copy(alpha = AlphaSecondary),
+                                if (nowBarStyle?.text == 0)
+                                    listOf(ev.track, ev.artist).filter { it.isNotBlank() }.joinToString(" · ")
+                                else ev.track.ifEmpty { stringResource(R.string.ax_dynamic_bar_music) },
+                                style = PillPrimary.copy(
+                                    fontSize = (LocalNowBarTextFontSp.current
+                                        ?: (nowBarStyle?.textSize ?: 13).toFloat()).sp,
+                                ),
+                                color = styledContentColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().then(
+                                    if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                    else Modifier
+                                ),
                             )
-                        }
-                    }
-                }
-                Spacer(Modifier.width(SpaceXs))
-                if (nowBarStyle != null && nowBarStyle.buttons == 0) {
-                    Icon(
-                        Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        tint = styledContentColor,
-                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipPrev() },
-                    )
-                }
-                if (nowBarStyle == null || nowBarStyle.buttons != 2) {
-                Surface(
-                    onClick = { viewModel.togglePlayPause() },
-                    modifier = Modifier.size(mediaButtonSize),
-                    shape = CircleShape,
-                    color = lerp(accent, styledContentColor, AlphaSubtle).copy(alpha = 0.4f),
-                ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(mediaButtonSize)) {
-                        Icon(
-                            if (event.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = stringResource(
-                                if (event.isPlaying) R.string.ax_dynamic_bar_pause
-                                else R.string.ax_dynamic_bar_play,
-                            ),
-                            tint = styledContentColor,
-                            modifier = Modifier.size(mediaButtonIconSize),
-                        )
-                    }
-                }
-                }
-                if (nowBarStyle != null && nowBarStyle.buttons == 0) {
-                    Icon(
-                        Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        tint = styledContentColor,
-                        modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipNext() },
-                    )
-                }
-                if (nowBarStyle?.wave == true && event.isPlaying && !isDozing) {
-                    val waveTransition = rememberInfiniteTransition(label = "nowbar_music_wave")
-                    val waveAmp by waveTransition.animateFloat(
-                        initialValue = 0.4f, targetValue = 1f,
-                        animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
-                        label = "nowbar_wave_amplitude",
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        for (i in 0..2) {
-                            Spacer(
-                                Modifier.width(3.dp).height(
-                                    (8f + (i + 1) * 5f * waveAmp).dp)
-                                    .padding(horizontal = 0.5.dp)
-                                    .background(styledContentColor, RoundedCornerShape(2.dp))
-                            )
-                        }
-                    }
-                }
-            } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
-                SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
-                Spacer(Modifier.width(SpaceXs))
-                Text(
-                    if (event.score1.isNotEmpty()) "${event.score1} - ${event.score2}"
-                        else stringResource(R.string.ax_dynamic_bar_sports_vs),
-                    style = if (nowBarStyle != null)
-                        PillPrimary.copy(fontSize = (LocalNowBarTextFontSp.current ?: 13f).sp)
-                        else PillPrimary,
-                    color = styledContentColor,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.width(SpaceXs))
-                SportsChipTeamBadge(event.team2Name, event.team2Icon, styledContentColor, sportsBadgeSize)
-            } else {
-                AnimatedContent(
-                    targetState = event,
-                    transitionSpec = {
-                        (fadeIn(motionScheme.defaultEffectsSpec()) +
-                            scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
-                            (fadeOut(motionScheme.fastEffectsSpec()) +
-                                scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
-                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
-                    },
-                    contentKey = { iconKeyFor(it) },
-                    label = "kg_chip_icon",
-                    modifier = if (nowBarStyle != null) Modifier.offset(y = (-1).dp)
-                        else Modifier,
-                ) { ev ->
-                    if (nowBarStyle != null) {
-                        // Use a consistent icon slot for hotspot, Bluetooth, and
-                        // the other non-media activities; keep glyphs optically centered.
-                        Box(
-                            modifier = Modifier.size(nowBarStatusIconSize + 2.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            PillEventIcon(
-                                ev, tint = styledContentColor, animated = false,
-                                staticIconSize = nowBarStatusIconSize,
-                            )
-                        }
-                    } else {
-                        PillEventIcon(ev, tint = styledContentColor, animated = false)
-                    }
-                }
-                Spacer(Modifier.width(SpaceXs))
-                AnimatedContent(
-                    targetState = event,
-                    transitionSpec = {
-                        (fadeIn(motionScheme.defaultEffectsSpec()) +
-                            scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
-                            (fadeOut(motionScheme.fastEffectsSpec()) +
-                                scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
-                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
-                    },
-                    contentKey = { textKeyFor(it) },
-                    label = "kg_chip_text",
-                    modifier = Modifier.weight(1f, fill = false).then(
-                        if (nowBarStyle != null) Modifier.offset(y = (-1).dp) else Modifier
-                    ),
-                ) { ev ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        KeyguardPrimaryText(
-                            ev, styledContentColor,
-                            Modifier.weight(1f, fill = false).widthIn(max = nowBarTextMaxWidth),
-                            batteryString,
-                        )
-                        val secondary = secondaryTextFor(ev)
-                            if (secondary != null) {
+                            if (ev.artist.isNotBlank() &&
+                                (nowBarStyle == null || nowBarStyle.text == 1)) {
                                 Text(
-                                    " · ",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = styledContentColor.copy(alpha = AlphaTertiary),
-                                )
-                                Text(
-                                    secondary,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    ev.artist,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = ((LocalNowBarTextFontSp.current
+                                            ?: (nowBarStyle?.textSize ?: 13).toFloat()) - 1f).sp),
                                     color = styledContentColor.copy(alpha = AlphaSecondary),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(
-                                        max = if (nowBarStyle != null)
-                                            (nowBarTextMaxWidth * 0.45f).coerceAtLeast(32.dp)
-                                        else 60.dp,
-                                    ).then(
-                                        if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
-                                        else Modifier
-                                    ),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
                         }
-                }
-            }
-
-            if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
-                val actionsCtx = LocalContext.current
-                val actions = actionsFor(event, actionsCtx)
-                if (actions.isNotEmpty()) {
+                    }
                     Spacer(Modifier.width(SpaceXs))
-                    actions.forEach { action ->
-                        Spacer(Modifier.width(SpaceXxs))
-                        ActionButton(
-                            icon = action.icon,
-                            color = styledContentColor,
-                            bgColor = accent.copy(alpha = 0.5f),
-                            onClick = { action.perform(viewModel, event, context) },
-                            size = nowBarActionSize,
-                            iconSize = nowBarActionIconSize,
+                    if (nowBarStyle != null && nowBarStyle.buttons == 0) {
+                        Icon(
+                            Icons.Filled.SkipPrevious,
+                            contentDescription = "Previous",
+                            tint = styledContentColor,
+                            modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipPrev() },
                         )
                     }
-                }
-            }
-
-            // The original Dynamic Bar retains its compact right-side count badge.
-            // Now Bar's dots are overlaid at the bottom, without consuming width.
-            if (nowBarStyle == null && eventCount > 1 && event !is IslandEvent.Media) {
-                Spacer(Modifier.width(SpaceXs))
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .height(CountBadgeHeight)
-                        .widthIn(min = CountBadgeHeight)
-                        .background(lerp(accent, styledContentColor, AlphaDisabled), ShapeChip)
-                        .padding(horizontal = SpaceXxs),
-                ) {
+                    if (nowBarStyle == null || nowBarStyle.buttons != 2) {
+                    Surface(
+                        onClick = { viewModel.togglePlayPause() },
+                        modifier = Modifier.size(mediaButtonSize),
+                        shape = CircleShape,
+                        color = lerp(accent, styledContentColor, AlphaSubtle).copy(alpha = 0.4f),
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(mediaButtonSize)) {
+                            Icon(
+                                if (event.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = stringResource(
+                                    if (event.isPlaying) R.string.ax_dynamic_bar_pause
+                                    else R.string.ax_dynamic_bar_play,
+                                ),
+                                tint = styledContentColor,
+                                modifier = Modifier.size(mediaButtonIconSize),
+                            )
+                        }
+                    }
+                    }
+                    if (nowBarStyle != null && nowBarStyle.buttons == 0) {
+                        Icon(
+                            Icons.Filled.SkipNext,
+                            contentDescription = "Next",
+                            tint = styledContentColor,
+                            modifier = Modifier.size(skipButtonIconSize).clickable { viewModel.skipNext() },
+                        )
+                    }
+                    if (nowBarStyle?.wave == true && event.isPlaying && !isDozing) {
+                        val waveTransition = rememberInfiniteTransition(label = "nowbar_music_wave")
+                        val waveAmp by waveTransition.animateFloat(
+                            initialValue = 0.4f, targetValue = 1f,
+                            animationSpec = infiniteRepeatable(tween(420), RepeatMode.Reverse),
+                            label = "nowbar_wave_amplitude",
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            for (i in 0..2) {
+                                Spacer(
+                                    Modifier.width(3.dp).height(
+                                        (8f + (i + 1) * 5f * waveAmp).dp)
+                                        .padding(horizontal = 0.5.dp)
+                                        .background(styledContentColor, RoundedCornerShape(2.dp))
+                                )
+                            }
+                        }
+                    }
+                } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
+                    SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
+                    Spacer(Modifier.width(SpaceXs))
                     Text(
-                        "$eventCount",
-                        style = TsBadge,
+                        if (event.score1.isNotEmpty()) "${event.score1} - ${event.score2}"
+                            else stringResource(R.string.ax_dynamic_bar_sports_vs),
+                        style = if (nowBarStyle != null)
+                            PillPrimary.copy(fontSize = (LocalNowBarTextFontSp.current ?: 13f).sp)
+                            else PillPrimary,
                         color = styledContentColor,
                         maxLines = 1,
                     )
+                    Spacer(Modifier.width(SpaceXs))
+                    SportsChipTeamBadge(event.team2Name, event.team2Icon, styledContentColor, sportsBadgeSize)
+                } else {
+                    AnimatedContent(
+                        targetState = event,
+                        transitionSpec = {
+                            (fadeIn(motionScheme.defaultEffectsSpec()) +
+                                scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
+                                (fadeOut(motionScheme.fastEffectsSpec()) +
+                                    scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
+                                SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
+                        },
+                        contentKey = { iconKeyFor(it) },
+                        label = "kg_chip_icon",
+                        modifier = if (nowBarStyle != null) Modifier.offset(y = (-1).dp)
+                            else Modifier,
+                    ) { ev ->
+                        if (nowBarStyle != null) {
+                            // Use a consistent icon slot for hotspot, Bluetooth, and
+                            // the other non-media activities; keep glyphs optically centered.
+                            Box(
+                                modifier = Modifier.size(nowBarStatusIconSize + 2.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                PillEventIcon(
+                                    ev, tint = styledContentColor, animated = false,
+                                    staticIconSize = nowBarStatusIconSize,
+                                )
+                            }
+                        } else {
+                            PillEventIcon(ev, tint = styledContentColor, animated = false)
+                        }
+                    }
+                    Spacer(Modifier.width(SpaceXs))
+                    AnimatedContent(
+                        targetState = event,
+                        transitionSpec = {
+                            (fadeIn(motionScheme.defaultEffectsSpec()) +
+                                scaleIn(initialScale = 0.85f, animationSpec = motionScheme.defaultSpatialSpec())) togetherWith
+                                (fadeOut(motionScheme.fastEffectsSpec()) +
+                                    scaleOut(targetScale = 0.85f, animationSpec = motionScheme.fastSpatialSpec())) using
+                                SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> motionScheme.defaultSpatialSpec() })
+                        },
+                        contentKey = { textKeyFor(it) },
+                        label = "kg_chip_text",
+                        modifier = Modifier.weight(1f, fill = false).then(
+                            if (nowBarStyle != null) Modifier.offset(y = (-1).dp) else Modifier
+                        ),
+                    ) { ev ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            KeyguardPrimaryText(
+                                ev, styledContentColor,
+                                Modifier.weight(1f, fill = false).widthIn(max = nowBarTextMaxWidth),
+                                batteryString,
+                            )
+                            val secondary = secondaryTextFor(ev)
+                                if (secondary != null) {
+                                    Text(
+                                        " · ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = styledContentColor.copy(alpha = AlphaTertiary),
+                                    )
+                                    Text(
+                                        secondary,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = styledContentColor.copy(alpha = AlphaSecondary),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(
+                                            max = if (nowBarStyle != null)
+                                                (nowBarTextMaxWidth * 0.45f).coerceAtLeast(32.dp)
+                                            else 60.dp,
+                                        ).then(
+                                            if (marqueeEnabled) Modifier.basicMarquee(iterations = 1)
+                                            else Modifier
+                                        ),
+                                    )
+                                }
+                            }
+                    }
+                }
+
+                if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
+                    val actionsCtx = LocalContext.current
+                    val actions = actionsFor(event, actionsCtx)
+                    if (actions.isNotEmpty()) {
+                        Spacer(Modifier.width(SpaceXs))
+                        actions.forEach { action ->
+                            Spacer(Modifier.width(SpaceXxs))
+                            ActionButton(
+                                icon = action.icon,
+                                color = styledContentColor,
+                                bgColor = accent.copy(alpha = 0.5f),
+                                onClick = { action.perform(viewModel, event, context) },
+                                size = nowBarActionSize,
+                                iconSize = nowBarActionIconSize,
+                            )
+                        }
+                    }
+                }
+
+                // The original Dynamic Bar retains its compact right-side count badge.
+                // Now Bar's dots are overlaid at the bottom, without consuming width.
+                if (nowBarStyle == null && eventCount > 1 && event !is IslandEvent.Media) {
+                    Spacer(Modifier.width(SpaceXs))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .height(CountBadgeHeight)
+                            .widthIn(min = CountBadgeHeight)
+                            .background(lerp(accent, styledContentColor, AlphaDisabled), ShapeChip)
+                            .padding(horizontal = SpaceXxs),
+                    ) {
+                        Text(
+                            "$eventCount",
+                            style = TsBadge,
+                            color = styledContentColor,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
@@ -1808,50 +1803,5 @@ private fun StopwatchTimeText(event: IslandEvent.Stopwatch, color: Color, modifi
             }
         }
         Text(formatStopwatch(elapsedMs), color = color, style = adaptiveNowBarMonoStyle(), modifier = modifier)
-    }
-}
-
-@Composable
-private fun Modifier.squishAnimation(toggleCount: Int): Modifier {
-    val scaleX = remember { Animatable(1f, visibilityThreshold = 0.01f) }
-    val scaleY = remember { Animatable(1f, visibilityThreshold = 0.01f) }
-    val currentToggleCount by rememberUpdatedState(toggleCount)
-
-    LaunchedEffect(Unit) {
-        snapshotFlow { currentToggleCount }
-            .drop(1)
-            .collectLatest {
-                scaleX.snapTo(1f)
-                scaleY.snapTo(1f)
-                coroutineScope {
-                    launch {
-                        scaleX.animateTo(
-                            targetValue = 1f,
-                            animationSpec = keyframes {
-                                durationMillis = 400
-                                1.06f at 120 using FastOutSlowInEasing
-                                0.97f at 260
-                                1f at 400
-                            },
-                        )
-                    }
-                    launch {
-                        scaleY.animateTo(
-                            targetValue = 1f,
-                            animationSpec = keyframes {
-                                durationMillis = 400
-                                0.95f at 120 using FastOutSlowInEasing
-                                1.03f at 260
-                                1f at 400
-                            },
-                        )
-                    }
-                }
-            }
-    }
-
-    return this.graphicsLayer {
-        this.scaleX = scaleX.value
-        this.scaleY = scaleY.value
     }
 }
