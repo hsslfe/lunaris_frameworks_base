@@ -153,6 +153,10 @@ private fun LunarisBarContainer(
     var selectedChipId by remember { mutableStateOf<PopupChipId?>(null) }
     var popupAnchorChip by remember { mutableStateOf<PopupChipModel.Shown?>(null) }
     var popupVisible by remember { mutableStateOf(false) }
+    var pagedPopup by remember { mutableStateOf(false) }
+    // Maintain the requested page until the ViewModel acknowledges a rapid swipe.
+    var requestedPopupPageId by remember { mutableStateOf<PopupChipId?>(null) }
+    var popupPageRequestVersion by remember { mutableIntStateOf(0) }
     var knownChipIds by remember { mutableStateOf<List<PopupChipId>>(emptyList()) }
     var mainChipBounds by remember { mutableStateOf<Rect?>(null) }
     var companionChipBounds by remember { mutableStateOf<Rect?>(null) }
@@ -195,6 +199,8 @@ private fun LunarisBarContainer(
     LaunchedEffect(state.userId) {
         popupAnchorChip = null
         popupVisible = false
+        pagedPopup = false
+        requestedPopupPageId = null
         popupOriginBounds = null
         selectedChipId = null
         knownChipIds = emptyList()
@@ -202,8 +208,9 @@ private fun LunarisBarContainer(
         squishTrigger = 0
     }
 
-    LaunchedEffect(chips, mediaTransitionChip, targetRequestVersion) {
-        val currentChipIds = chips.map { it.chipId }
+    val currentChipIds = chips.map { it.chipId }
+    // Only page IDs and actual transition requests may change the selected page.
+    LaunchedEffect(currentChipIds, mediaTransitionChip?.chipId, targetRequestVersion) {
         val newestChipId =
             if (knownChipIds.isEmpty()) {
                 PopupChipId.MediaControl.takeIf {
@@ -220,6 +227,7 @@ private fun LunarisBarContainer(
         selectedChipId =
             when {
                 newUnlockChipId != null -> newUnlockChipId
+                popupVisible && selectedChipId in currentChipIds -> selectedChipId
                 newestChipId != null -> newestChipId
                 chips.any { it.chipId == selectedChipId } -> selectedChipId
                 else -> chips.firstOrNull()?.chipId
@@ -240,9 +248,9 @@ private fun LunarisBarContainer(
                     display.rotation,
                 )
         if (currentChipIds != knownChipIds || hasMediaRequest) {
-            mediaArrival = hasMediaRequest
+            mediaArrival = hasMediaRequest && !popupVisible
         }
-        if (hasMediaRequest && newUnlockChipId == null) {
+        if (hasMediaRequest && !popupVisible && newUnlockChipId == null) {
             selectedChipId = PopupChipId.MediaControl
             squishTrigger++
         }
@@ -253,7 +261,11 @@ private fun LunarisBarContainer(
     val selectedChip = chips.getOrNull(selectedIndex)
     val shownChip = chips.firstOrNull { it.isPopupShown }
 
-    LaunchedEffect(shownChip) {
+    // Metadata updates do not restart popup geometry or its anchoring.
+    LaunchedEffect(shownChip?.chipId, requestedPopupPageId, popupPageRequestVersion) {
+        val pending = requestedPopupPageId
+        // An intermediate model must not take ownership of a newer swipe.
+        if (pending != null && pending != shownChip?.chipId) return@LaunchedEffect
         if (shownChip != null) {
             val isUnlock =
                 (shownChip.popupContent as? PopupContentModel.SystemEvent)?.kind ==
@@ -281,18 +293,32 @@ private fun LunarisBarContainer(
                 popupOriginBounds =
                     if (fromPeek && companionChipBounds != null) companionChipBounds
                     else mainChipBounds
+                selectedChipId = shownChip.chipId
             }
             popupAnchorChip = shownChip
             popupVisible = true
-        } else if (popupAnchorChip != null) {
+            if (requestedPopupPageId == shownChip.chipId) requestedPopupPageId = null
+        } else if (popupAnchorChip != null && requestedPopupPageId == null) {
             popupVisible = false
         }
     }
+    // A rejected/removed page must not leave the popup in a pending state forever.
+    val latestShownChip by rememberUpdatedState(shownChip)
+    LaunchedEffect(requestedPopupPageId, popupPageRequestVersion) {
+        val expectedId = requestedPopupPageId ?: return@LaunchedEffect
+        val expectedVersion = popupPageRequestVersion
+        kotlinx.coroutines.delay(450L)
+        if (requestedPopupPageId == expectedId && popupPageRequestVersion == expectedVersion) {
+            // Reconcile to the actual owner if the latest request was rejected.
+            // A stale timeout must never clear a newer request for the same ID.
+            latestShownChip?.let { selectedChipId = it.chipId }
+            requestedPopupPageId = null
+        }
+    }
 
-    LaunchedEffect(chips) {
-        onMediaControlPopupVisibilityChanged(
-            chips.any { it.chipId == PopupChipId.MediaControl && it.isPopupShown }
-        )
+    val mediaPopupShown = chips.any { it.chipId == PopupChipId.MediaControl && it.isPopupShown }
+    LaunchedEffect(mediaPopupShown) {
+        onMediaControlPopupVisibilityChanged(mediaPopupShown)
     }
 
     val switchScaleAnim = remember { Animatable(1f) }
@@ -302,7 +328,7 @@ private fun LunarisBarContainer(
             switchInitialized = true
             return@LaunchedEffect
         }
-        if (settings.isReducedMotion) {
+        if (pagedPopup || settings.isReducedMotion) {
             switchScaleAnim.snapTo(1f)
             return@LaunchedEffect
         }
@@ -318,13 +344,25 @@ private fun LunarisBarContainer(
     }
 
     fun selectRelative(direction: Int) {
-        if (chips.size <= 1) return
+        if (direction == 0 || chips.size <= 1) return
+        val step = if (direction > 0) 1 else -1
+        // Use the synchronous target; the shown model may lag behind fast swipes.
+        val currentIndex =
+            chips.indexOfFirst { it.chipId == (requestedPopupPageId ?: selectedChipId) }
+                .takeIf { it >= 0 }
+                ?: chips.indexOfFirst { it.chipId == shownChip?.chipId }
+                    .takeIf { it >= 0 }
+                ?: selectedIndex
+        val newChip = chips[(currentIndex + step).mod(chips.size)]
         mediaArrival = false
-        lastDirection = if (direction >= 0) 1 else -1
-        val newIndex = (selectedIndex + direction).mod(chips.size)
-        val newChip = chips[newIndex]
+        lastDirection = step
         selectedChipId = newChip.chipId
         if (popupVisible) {
+            // The compact chip has already yielded to this popup. Keep it out of
+            // the notch while the old and new page models exchange ownership.
+            pagedPopup = true
+            requestedPopupPageId = newChip.chipId
+            popupPageRequestVersion++
             newChip.showPopup()
         }
     }
@@ -376,7 +414,7 @@ private fun LunarisBarContainer(
                 (bounds.bottom - dy).toInt(),
             )
         }
-        if (selectedChip != null && !selectedChip.isPopupShown) include(mainChipBounds)
+        if (!pagedPopup && selectedChip != null && !selectedChip.isPopupShown) include(mainChipBounds)
         if (companionChip != null && showCompanionChip) include(companionChipBounds)
         currentOnIslandBoundsChanged(coverage)
     }
@@ -418,23 +456,28 @@ private fun LunarisBarContainer(
             }
         }
         popupAnchorChip?.let { anchoredChip ->
+            val pageTarget =
+                if (popupVisible) {
+                    requestedPopupPageId?.let { id -> chips.firstOrNull { it.chipId == id } }
+                } else null
             StatusBarPopup(
-                viewModel = withIslandLaunch(shownChip ?: anchoredChip),
+                viewModel = withIslandLaunch(pageTarget ?: shownChip ?: anchoredChip),
                 isVisible = popupVisible,
                 chipBoundsInScreen = popupOriginBounds,
                 canPage = chips.size > 1,
                 pageDirection = lastDirection,
                 onPage = { direction -> selectRelative(direction) },
                 onHidden = {
-                    if (shownChip == null) {
+                    if (!popupVisible && shownChip == null) {
                         popupAnchorChip = null
                         popupOriginBounds = null
+                        pagedPopup = false
                     }
                 },
             )
         }
 
-        if (selectedChip == null) return@Box
+        if (selectedChip == null || pagedPopup) return@Box
 
         LunarisBarPositionedContent(cutoutSpec, alignment, settings, hostLeft) {
             Row(

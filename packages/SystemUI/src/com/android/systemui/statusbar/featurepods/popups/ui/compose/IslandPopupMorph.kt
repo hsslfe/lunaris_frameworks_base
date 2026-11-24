@@ -38,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.graphicsLayer
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
@@ -67,24 +69,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private class IslandPopupGeometry(origin: Rect) {
-    val width = IslandMotionSpring(origin.height * 1.8f)
-    val height = IslandMotionSpring(origin.height * 0.8f)
-    val centerX = IslandMotionSpring(origin.center.x)
-    val centerY = IslandMotionSpring(origin.center.y + origin.height * 0.15f)
+    // Normalized progress survives content-size changes without restarting a spring.
+    val widthProgress = IslandMotionSpring(0f)
+    val heightProgress = IslandMotionSpring(0f)
+    val positionProgress = IslandMotionSpring(0f)
     val pillWidth = IslandMotionSpring(origin.width)
     val pillHeight = IslandMotionSpring(origin.height)
 
-    val bounds: Rect
-        get() {
-            val halfWidth = width.value.coerceAtLeast(1f) / 2f
-            val halfHeight = height.value.coerceAtLeast(1f) / 2f
-            return Rect(
-                centerX.value - halfWidth,
-                centerY.value - halfHeight,
-                centerX.value + halfWidth,
-                centerY.value + halfHeight,
-            )
-        }
+    fun bounds(origin: Rect, destination: Rect): Rect {
+        val width =
+            lerp(origin.height * 1.6f, destination.width, widthProgress.value).coerceAtLeast(1f)
+        val height =
+            lerp(origin.height * 0.8f, destination.height, heightProgress.value).coerceAtLeast(1f)
+        val centerX = lerp(origin.center.x, destination.center.x, positionProgress.value)
+        val top =
+            lerp(origin.center.y - origin.height * 0.4f, destination.top, positionProgress.value)
+        return Rect(centerX - width / 2f, top, centerX + width / 2f, top + height)
+    }
 }
 
 private fun Path.islandNeck(
@@ -161,6 +162,7 @@ internal fun IslandPopupMorph(
     fastEnter: Boolean = false,
     useRedesignedMediaBackground: Boolean = false,
     allowOutsideInteraction: Boolean = false,
+    pageScale: () -> Float = { 1f },
     secondaryContent: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
@@ -213,15 +215,18 @@ internal fun IslandPopupMorph(
         Rect(targetLeft, targetTop, targetLeft + contentSize.width, targetTop + contentSize.height)
     val ready = screenOffset != null && contentSize.width > 0 && contentSize.height > 0
     val currentOrigin by rememberUpdatedState(origin)
+    val currentDestination by rememberUpdatedState(destination)
 
     LaunchedEffect(ready) { if (ready && motion == null) motion = IslandPopupGeometry(origin) }
 
-    LaunchedEffect(motion, isVisible, origin, destination, fastEnter) {
+    LaunchedEffect(motion, isVisible) {
         val geometry = motion ?: return@LaunchedEffect
+        val target = if (isVisible) 1f else 0f
+        // The pager owns size changes; spring progress only on expansion/collapse.
         coroutineScope {
             launch {
-                geometry.width.animateTo(
-                    if (isVisible) destination.width else origin.height * 1.6f,
+                geometry.widthProgress.animateTo(
+                    target,
                     when {
                         !isVisible -> DynamicIslandMotion.CloseWidth
                         fastEnter -> DynamicIslandMotion.FastOpen
@@ -230,8 +235,8 @@ internal fun IslandPopupMorph(
                 )
             }
             launch {
-                geometry.height.animateTo(
-                    if (isVisible) destination.height else origin.height * 0.8f,
+                geometry.heightProgress.animateTo(
+                    target,
                     when {
                         !isVisible -> DynamicIslandMotion.CloseHeight
                         fastEnter -> DynamicIslandMotion.FastOpen
@@ -240,18 +245,8 @@ internal fun IslandPopupMorph(
                 )
             }
             launch {
-                geometry.centerX.animateTo(
-                    if (isVisible) destination.center.x else origin.center.x,
-                    when {
-                        !isVisible -> DynamicIslandMotion.ClosePosition
-                        fastEnter -> DynamicIslandMotion.FastOpen
-                        else -> DynamicIslandMotion.OpenPosition
-                    },
-                )
-            }
-            launch {
-                geometry.centerY.animateTo(
-                    if (isVisible) destination.center.y else origin.center.y,
+                geometry.positionProgress.animateTo(
+                    target,
                     when {
                         !isVisible -> DynamicIslandMotion.ClosePosition
                         fastEnter -> DynamicIslandMotion.FastOpen
@@ -286,7 +281,7 @@ internal fun IslandPopupMorph(
         }
     }
 
-    LaunchedEffect(isVisible, motion, screenOffset != null, fastEnter) {
+    LaunchedEffect(isVisible, motion, screenOffset != null) {
         val geometry = motion
         if (geometry == null) {
             if (!isVisible && screenOffset != null && !ready) currentOnHidden()
@@ -354,7 +349,7 @@ internal fun IslandPopupMorph(
                 }
             }
             snapshotFlow {
-                    val frame = geometry.bounds
+                    val frame = geometry.bounds(currentOrigin, currentDestination)
                     (frame.center - currentOrigin.center).getDistance() < returnDistance &&
                         frame.height < currentOrigin.height * 0.95f
                 }
@@ -364,15 +359,21 @@ internal fun IslandPopupMorph(
     }
 
     val geometry = motion
-    val rawFrame = geometry?.bounds ?: Rect.Zero
+    val fullyOpen = isVisible && geometry != null &&
+        geometry.widthProgress.value == 1f && geometry.heightProgress.value == 1f &&
+        geometry.positionProgress.value == 1f
+    val rawFrame = geometry?.bounds(origin, destination) ?: Rect.Zero
     val frameWidth = rawFrame.width.coerceIn(0f, rootSize.width.toFloat())
     val frameHeight = rawFrame.height.coerceIn(0f, rootSize.height.toFloat())
     val frameLeft = lunarisBarPopupLeft(rawFrame.center.x, frameWidth, rootSize.width.toFloat(), 0f)
     val frameTop = rawFrame.top.coerceIn(0f, (rootSize.height - frameHeight).coerceAtLeast(0f))
     val frame = Rect(frameLeft, frameTop, frameLeft + frameWidth, frameTop + frameHeight)
+    // Re-sizing an open page must not replay the entrance mask over its content.
     val expansion =
-        ((frame.height - origin.height) / (destination.height - origin.height).coerceAtLeast(1f))
-            .coerceIn(0f, 1f)
+        if (isVisible && revealMillis.value >= 259f) 1f
+        else
+            ((frame.height - origin.height) / (destination.height - origin.height).coerceAtLeast(1f))
+                .coerceIn(0f, 1f)
     // Unlock feedback should appear during expansion, without waiting for the card to settle.
     val bodyAlpha =
         contentFade.value *
@@ -499,7 +500,7 @@ internal fun IslandPopupMorph(
                             shape = popupShape,
                             background =
                                 if (useRedesignedMediaBackground) {
-                                    { RedesignedMediaPopupBackground(popupShape) }
+                                    { PagingMediaPopupBackground(popupShape) }
                                 } else null,
                         ) {}
                     }
@@ -508,7 +509,7 @@ internal fun IslandPopupMorph(
             Box(
                 Modifier.graphicsLayer {
                         alpha = if (geometry != null) bodyAlpha else 0f
-                        shape = contentClip
+                        shape = if (fullyOpen) popupShape else contentClip
                         clip = true
                     }
                     .then(if (bodyAlpha < 0.5f) Modifier.clearAndSetSemantics {} else Modifier)
@@ -557,23 +558,41 @@ internal fun IslandPopupMorph(
                 )
             )
         secondarySize = IntSize(secondary.width, secondary.height)
+        // Once open, the pager has already measured this frame's animated size.
+        // Using the previous composition's destination here leaves the outline a frame behind.
+        val pageFrame = if (fullyOpen) {
+            val left = lunarisBarPopupLeft(origin.center.x, card.width.toFloat(),
+                constraints.maxWidth.toFloat(), margin.toFloat())
+            Rect(left, targetTop, left + card.width, targetTop + card.height)
+        } else frame
         val background =
             measurables[0].measure(
                 Constraints.fixed(
-                    frame.width.roundToInt().coerceAtLeast(1),
-                    frame.height.roundToInt().coerceAtLeast(1),
+                    pageFrame.width.roundToInt().coerceAtLeast(1),
+                    pageFrame.height.roundToInt().coerceAtLeast(1),
                 )
             )
         contentSize = IntSize(card.width, card.height)
+        // Root geometry must use the available display height, not a page's transient height.
+        rootSize = IntSize(constraints.maxWidth, constraints.maxHeight)
         val secondaryHeight = if (secondary.height > 0) secondary.height + gap.roundToInt() else 0
-        val windowHeight = constraints.constrainHeight(top + card.height + secondaryHeight + margin)
-        rootSize = IntSize(constraints.maxWidth, windowHeight)
+        val bottom = maxOf(top + card.height, pageFrame.bottom.roundToInt())
+        val windowHeight = constraints.constrainHeight(bottom + secondaryHeight + margin)
         layout(rootSize.width, windowHeight) {
-            background.placeWithLayer(frame.left.roundToInt(), frame.top.roundToInt()) {
+            background.placeWithLayer(pageFrame.left.roundToInt(), pageFrame.top.roundToInt()) {
+                transformOrigin = TransformOrigin(0.5f, 0f)
+                val swipeScale = pageScale()
                 alpha = surfaceFade.value
+                scaleX = swipeScale
+                scaleY = 1f - (1f - swipeScale) * 1.65f
             }
-            card.place((frame.center.x - card.width / 2f).roundToInt(), frame.top.roundToInt())
-            secondary.place(secondaryLeft.roundToInt(), (frame.bottom + gap).roundToInt())
+            card.placeWithLayer((pageFrame.center.x - card.width / 2f).roundToInt(), pageFrame.top.roundToInt()) {
+                transformOrigin = TransformOrigin(0.5f, 0f)
+                val swipeScale = pageScale()
+                scaleX = swipeScale
+                scaleY = 1f - (1f - swipeScale) * 1.65f
+            }
+            secondary.place(secondaryLeft.roundToInt(), (pageFrame.bottom + gap).roundToInt())
         }
     }
 }

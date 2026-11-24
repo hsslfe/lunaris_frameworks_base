@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Matrix
@@ -32,10 +33,12 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.android.systemui.axdynamicbar.ui.compose.LocalSwipePageOpacity
 import kotlin.math.min
 
 internal class LunarisBarSquircle(val radius: Dp) : Shape {
@@ -147,6 +150,26 @@ internal fun LunarisBarSurface(
                 )
             }
             CompositionLocalProvider(LocalContentColor provides foreground) { content() }
+        }
+    }
+}
+
+/** Fade the media gradient with its page, independently of the stationary outline. */
+@Composable
+internal fun BoxScope.PagingMediaPopupBackground(shape: Shape) {
+    val pageOpacity = LocalSwipePageOpacity.current
+    val surfaceColor = LocalLunarisBarColors.current.surface
+    Box(
+        Modifier.matchParentSize().drawBehind {
+            // Keep a plain surface behind the incoming artwork rather than
+            // exposing a completely empty window at the page hand-off.
+            drawRect(surfaceColor, alpha = 1f - pageOpacity().coerceIn(0f, 1f))
+        },
+    ) {
+        Box(Modifier.matchParentSize().graphicsLayer {
+            alpha = pageOpacity().coerceIn(0f, 1f)
+        }) {
+            RedesignedMediaPopupBackground(shape)
         }
     }
 }

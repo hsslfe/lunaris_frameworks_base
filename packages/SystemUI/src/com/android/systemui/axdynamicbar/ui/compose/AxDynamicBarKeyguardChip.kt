@@ -374,7 +374,7 @@ fun AxDynamicBarKeyguardChip(
                 SwipePageTransition(
                     target = displayEvent,
                     pageKey = displayEvent.id,
-                    travel = 14.dp,
+                    travel = { 14.dp },
                     direction = { from, to -> swipe.direction(from, to, chipState.allEvents) },
                     durationMillis = 245,
                 ) { event, pageMotion ->
