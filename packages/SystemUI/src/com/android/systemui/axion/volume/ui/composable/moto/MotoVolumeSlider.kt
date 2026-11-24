@@ -54,10 +54,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -67,6 +67,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.systemui.axion.volume.domain.model.AxionAppVolumeModel
 import com.android.systemui.axion.volume.domain.model.AxionVolumeStreamModel
+import com.android.systemui.axion.volume.ui.composable.LocalVolumeFillBrush
 import com.android.systemui.axion.volume.ui.viewmodel.AxionVolumeDialogViewModel
 import com.android.systemui.haptics.slider.SeekableSliderTrackerConfig
 import com.android.systemui.haptics.slider.SliderHapticFeedbackConfig
@@ -217,7 +218,7 @@ private fun MotoVolumeSlider(
     val hapticConfigs = remember {
         VolumeHapticsConfigs(SliderHapticFeedbackConfig(), SeekableSliderTrackerConfig())
     }
-    val activeColor = MaterialTheme.colorScheme.primary
+    val fillBrush = LocalVolumeFillBrush.current ?: SolidColor(MaterialTheme.colorScheme.primary)
     val trackColor = Color.Black.copy(alpha = 0.8f)
     Column(
         modifier = modifier.width(sliderWidth),
@@ -254,12 +255,9 @@ private fun MotoVolumeSlider(
                     drawRoundRect(trackColor, cornerRadius = radius)
                     val fillHeight = size.height * state.value.coerceIn(0f, 1f)
                     if (fillHeight > 0f) {
-                        drawRoundRect(
-                            color = activeColor,
-                            topLeft = Offset(0f, size.height - fillHeight),
-                            size = Size(size.width, fillHeight),
-                            cornerRadius = radius,
-                        )
+                        inset(0f, size.height - fillHeight, 0f, 0f) {
+                            drawRoundRect(fillBrush, cornerRadius = radius)
+                        }
                     }
                 }
             },

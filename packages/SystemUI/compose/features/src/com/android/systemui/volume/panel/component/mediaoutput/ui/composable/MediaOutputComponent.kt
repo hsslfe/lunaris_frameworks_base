@@ -16,6 +16,7 @@
 
 package com.android.systemui.volume.panel.component.mediaoutput.ui.composable
 
+import com.android.systemui.volume.dialog.sliders.ui.compose.LocalVolumeAccentBrush
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -175,11 +176,11 @@ class MediaOutputComponent @Inject constructor(private val viewModel: MediaOutpu
             ) { targetViewModel ->
                 Spacer(
                     modifier =
-                        Modifier.fillMaxSize()
-                            .background(
-                                color = targetViewModel.backgroundColor.toColor(),
-                                shape = RoundedCornerShape(12.dp),
-                            )
+                        Modifier.fillMaxSize().then(
+                            LocalVolumeAccentBrush.current?.takeIf { targetViewModel is DeviceIconViewModel.IsPlaying }
+                                ?.let { Modifier.background(it, RoundedCornerShape(12.dp)) }
+                                ?: Modifier.background(targetViewModel.backgroundColor.toColor(), RoundedCornerShape(12.dp))
+                        )
                             .sysuiResTag(
                                 if (targetViewModel is DeviceIconViewModel.IsPlaying) {
                                     MediaOutputComponentMotionTestKeys.PLAYING_ICON_BACKGROUND_TAG

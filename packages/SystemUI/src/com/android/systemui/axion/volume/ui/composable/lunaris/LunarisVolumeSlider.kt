@@ -32,12 +32,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.*
@@ -48,6 +49,7 @@ import androidx.core.graphics.drawable.toBitmap
 import com.android.systemui.axion.volume.domain.model.AxionAppVolumeModel
 import com.android.systemui.axion.volume.domain.model.AxionVolumeStreamModel
 import com.android.systemui.axion.volume.domain.model.VolumeSliderItem
+import com.android.systemui.axion.volume.ui.composable.LocalVolumeFillBrush
 import com.android.systemui.axion.volume.ui.viewmodel.AxionVolumeDialogViewModel
 import com.android.systemui.haptics.slider.SeekableSliderTrackerConfig
 import com.android.systemui.haptics.slider.SliderHapticFeedbackConfig
@@ -98,7 +100,7 @@ fun LunarisVolumeSlider(
         label = "lunaris_icon_alpha"
     )
 
-    val primary = MaterialTheme.colorScheme.primary
+    val fillBrush = LocalVolumeFillBrush.current ?: SolidColor(MaterialTheme.colorScheme.primary)
     val surfaceVariant = lerp(MaterialTheme.colorScheme.surfaceVariant, Color.Black, 0.2f)
 
     Column(
@@ -188,7 +190,9 @@ fun LunarisVolumeSlider(
                         drawRoundRect(color = surfaceVariant, size = Size(w, h), cornerRadius = CornerRadius(r))
                         val minFill = r * 2f
                         val fillH = minFill + (h - minFill) * animatedValue
-                        drawRoundRect(color = primary, topLeft = Offset(0f, h - fillH), size = Size(w, fillH), cornerRadius = CornerRadius(r))
+                        inset(0f, h - fillH, 0f, 0f) {
+                            drawRoundRect(fillBrush, cornerRadius = CornerRadius(w / 2f))
+                        }
                     }
             )
         }

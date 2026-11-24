@@ -16,6 +16,9 @@
 
 package com.android.systemui.volume.panel.component.button.ui.composable
 
+import com.android.systemui.volume.panel.ui.composable.LocalPanelGradientBrush
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import android.view.Gravity
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -59,6 +62,7 @@ import kotlinx.coroutines.flow.StateFlow
 /** [ComposeVolumePanelUiComponent] implementing a clickable button from a bottom row. */
 class ButtonComponent(
     private val viewModelFlow: StateFlow<ButtonViewModel?>,
+    private val useVolumeGradient: Boolean = false,
     private val onClick: (expandable: Expandable, horizontalGravity: Int) -> Unit,
 ) : ComposeVolumePanelUiComponent {
 
@@ -66,6 +70,7 @@ class ButtonComponent(
     override fun VolumePanelComposeScope.Content(modifier: Modifier) {
         val viewModelByState by viewModelFlow.collectAsStateWithLifecycle()
         val viewModel = viewModelByState ?: return
+        val brush = if (useVolumeGradient && viewModel.isActive) LocalPanelGradientBrush.current else null
 
         val screenWidth: Float =
             with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
@@ -80,13 +85,15 @@ class ButtonComponent(
             BottomComponentButtonSurface {
                 Expandable(
                     modifier =
-                        Modifier.fillMaxSize().padding(8.dp).semantics {
+                        Modifier.fillMaxSize().padding(8.dp)
+                            .then(brush?.let { Modifier.background(it, RoundedCornerShape(20.dp)) } ?: Modifier)
+                            .semantics {
                             role = Role.Button
                             contentDescription = viewModel.label
                             viewModel.stateDescription?.let { stateDescription = it }
                         },
                     color =
-                        if (viewModel.isActive) {
+                        if (brush != null) Color.Transparent else if (viewModel.isActive) {
                             if (Flags.volumeRedesign()) {
                                 MaterialTheme.colorScheme.primary
                             } else {
