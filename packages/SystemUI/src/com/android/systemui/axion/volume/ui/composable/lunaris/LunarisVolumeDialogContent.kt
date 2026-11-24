@@ -16,6 +16,7 @@
 
 package com.android.systemui.axion.volume.ui.composable.lunaris
 
+import com.android.systemui.volume.dialog.sliders.ui.compose.LocalVolumeAccentBrush
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.view.HapticFeedbackConstants
@@ -200,7 +201,7 @@ private fun LunarisCollapsedPanel(viewModel: AxionVolumeDialogViewModel) {
                 modifier = Modifier
                     .padding(8.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .lunarisButtonBackground(MaterialTheme.colorScheme.primary)
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                         viewModel.rescheduleTimeout()
                         viewModel.toggleExpanded()
@@ -328,11 +329,13 @@ private fun LunarisExpandedHeader(
         )
 
         if (captionsAvailable) {
+            val brush = if (captionsEnabled) LocalVolumeAccentBrush.current else null
             FilledTonalIconButton(
                 onClick = { viewModel.rescheduleTimeout(); viewModel.toggleCaptions() },
-                modifier = Modifier.size(LunarisBottomButtonSize),
+                modifier = Modifier.size(LunarisBottomButtonSize)
+                    .then(brush?.let { Modifier.background(it, CircleShape) } ?: Modifier),
                 colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = if (captionsEnabled) MaterialTheme.colorScheme.primaryContainer
+                    containerColor = if (brush != null) Color.Transparent else if (captionsEnabled) MaterialTheme.colorScheme.primaryContainer
                                      else lerp(MaterialTheme.colorScheme.surfaceVariant, Color.Black, 0.2f),
                     contentColor = if (captionsEnabled) MaterialTheme.colorScheme.onPrimaryContainer
                                      else MaterialTheme.colorScheme.onSurfaceVariant

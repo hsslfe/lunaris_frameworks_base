@@ -16,6 +16,8 @@
 
 package com.android.systemui.volume.panel.component.button.ui.composable
 
+import com.android.systemui.volume.panel.ui.composable.LocalPanelGradientBrush
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -54,6 +56,7 @@ import kotlinx.coroutines.flow.StateFlow
 /** [ComposeVolumePanelUiComponent] implementing a toggleable button from a bottom row. */
 class ToggleButtonComponent(
     private val viewModelFlow: StateFlow<ButtonViewModel?>,
+    private val useVolumeGradient: Boolean = false,
     private val onCheckedChange: (isChecked: Boolean) -> Unit,
 ) : ComposeVolumePanelUiComponent {
 
@@ -61,6 +64,7 @@ class ToggleButtonComponent(
     override fun VolumePanelComposeScope.Content(modifier: Modifier) {
         val viewModelByState by viewModelFlow.collectAsStateWithLifecycle()
         val viewModel = viewModelByState ?: return
+        val brush = if (useVolumeGradient && viewModel.isActive) LocalPanelGradientBrush.current else null
 
         Column(
             modifier = modifier,
@@ -96,7 +100,9 @@ class ToggleButtonComponent(
                     }
                 Button(
                     modifier =
-                        Modifier.fillMaxSize().padding(8.dp).semantics {
+                        Modifier.fillMaxSize().padding(8.dp)
+                            .then(brush?.let { Modifier.background(it, RoundedCornerShape(20.dp)) } ?: Modifier)
+                            .semantics {
                             role = Role.Switch
                             if (viewModel.stateDescription == null) {
                                 toggleableState =
@@ -112,7 +118,7 @@ class ToggleButtonComponent(
                         },
                     onClick = { onCheckedChange(!viewModel.isActive) },
                     shape = RoundedCornerShape(20.dp),
-                    colors = colors,
+                    colors = if (brush == null) colors else colors.copy(containerColor = Color.Transparent),
                     contentPadding = PaddingValues(0.dp),
                 ) {
                     Icon(modifier = Modifier.size(24.dp), icon = viewModel.icon)

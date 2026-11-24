@@ -25,6 +25,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -329,15 +330,25 @@ private fun ExpandedPanelContent(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 val captionsEnabled = dialogState.captionsEnabled
+                val captionBrush = if (captionsEnabled) LocalVolumeFillBrush.current else null
                 FilledTonalIconButton(
                     onClick = { 
                         viewModel.rescheduleTimeout()
                         viewModel.toggleCaptions() 
                     },
-                    modifier = Modifier.size(VolumeButtonsSizeExpanded),
+                    modifier = Modifier.size(VolumeButtonsSizeExpanded)
+                        .then(captionBrush?.let { Modifier.background(it, CircleShape) } ?: Modifier),
                     colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = if (captionsEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = if (captionsEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        containerColor = when {
+                            captionBrush != null -> Color.Transparent
+                            captionsEnabled -> MaterialTheme.colorScheme.primaryContainer
+                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                        contentColor = when {
+                            captionBrush != null -> MaterialTheme.colorScheme.onPrimary
+                            captionsEnabled -> MaterialTheme.colorScheme.onPrimaryContainer
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                     )
                 ) {
                     Icon(

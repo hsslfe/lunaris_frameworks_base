@@ -66,6 +66,7 @@ import android.graphics.Rect;
 import android.graphics.Region;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.RotateDrawable;
 import android.graphics.drawable.ShapeDrawable;
@@ -166,6 +167,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -216,6 +218,7 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
     private boolean mShowVibrate;
     private int mRingerCount;
     private final boolean mShowLowMediaVolumeIcon;
+    private VolumeGradientColors mVolumeGradient;
     private final boolean mChangeVolumeRowTintWhenInactive;
 
     private final Context mContext;
@@ -813,6 +816,7 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
 
         mExpandRowsView = mDialog.findViewById(R.id.expandable_indicator_container);
         mExpandRows = mDialog.findViewById(R.id.expandable_indicator);
+        if (mVolumeGradient != null) updateRingerGradient();
 
         if (isWindowGravityLeft()) {
             ViewGroup container = mDialog.findViewById(R.id.volume_dialog_container);
@@ -1024,7 +1028,7 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
         row.anim = null;
 
         final LayerDrawable seekbarDrawable =
-                (LayerDrawable) mContext.getDrawable(R.drawable.volume_row_seekbar);
+                (LayerDrawable) mContext.getDrawable(R.drawable.volume_row_seekbar).mutate();
 
         final LayerDrawable seekbarProgressDrawable = (LayerDrawable)
                 ((RoundedCornerProgressDrawable) seekbarDrawable.findDrawableByLayerId(
@@ -1032,6 +1036,8 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
 
         row.sliderProgressSolid = seekbarProgressDrawable.findDrawableByLayerId(
                 R.id.volume_seekbar_progress_solid);
+        row.progressLayers = seekbarProgressDrawable;
+        applyVolumeGradient(row);
         final Drawable sliderProgressIcon = seekbarProgressDrawable.findDrawableByLayerId(
                         R.id.volume_seekbar_progress_icon);
         row.sliderProgressIcon = sliderProgressIcon != null ? (AlphaTintDrawableWrapper)
@@ -1789,6 +1795,14 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
             mDefaultRow = getActiveRow();
         }
 
+        VolumeGradientColors gradient = VolumeGradientColors.read(mContext);
+        if (!Objects.equals(gradient, mVolumeGradient)) {
+            mVolumeGradient = gradient;
+            updateRingerGradient();
+            for (VolumeRow row : mRows) {
+                applyVolumeGradient(row);
+            }
+        }
         initSettingsH(lockTaskModeState);
         initAppVolumeH();
         mShowing = true;
@@ -2474,6 +2488,41 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
         return (mAutomute && streamState.level == 0) || streamState.muted;
     }
 
+    private void updateRingerGradient() {
+        applyRingerGradient(mSelectedRingerContainer);
+        applyRingerGradient(mRingerDrawerNewSelectionBg);
+    }
+
+    private void applyRingerGradient(View view) {
+        if (view == null) return;
+        Drawable background = mContext.getDrawable(R.drawable.volume_drawer_selection_bg_legacy)
+                .mutate();
+        if (mVolumeGradient != null && background instanceof GradientDrawable) {
+            GradientDrawable shape = (GradientDrawable) background;
+            shape.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+            shape.setColors(new int[] {mVolumeGradient.getEnd(), mVolumeGradient.getStart()});
+        }
+        view.setBackground(background);
+    }
+
+    private void applyVolumeGradient(VolumeRow row) {
+        Drawable fill = row.sliderProgressSolid;
+        if (mVolumeGradient != null && row.slider.isEnabled() && fill instanceof GradientDrawable
+                && fill.getConstantState() != null) {
+            GradientDrawable gradient = (GradientDrawable) fill.getConstantState()
+                    .newDrawable(mContext.getResources()).mutate();
+            gradient.setTintList(null);
+            // The stock SeekBar rotates its horizontal progress drawable by 270 degrees.
+            gradient.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+            gradient.setColors(new int[] {mVolumeGradient.getStart(), mVolumeGradient.getEnd()});
+            fill = gradient;
+        }
+        if (row.progressLayers.findDrawableByLayerId(R.id.volume_seekbar_progress_solid) != fill) {
+            row.progressLayers.setDrawableByLayerId(R.id.volume_seekbar_progress_solid, fill);
+            row.slider.invalidate();
+        }
+    }
+
     private void updateVolumeRowTintH(VolumeRow row, boolean isActive) {
         if (isActive) {
             row.slider.requestFocus();
@@ -2512,7 +2561,10 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
     }
 
     private void updateVolumeRowSliderH(VolumeRow row, boolean enable, int vlevel) {
-        row.slider.setEnabled(enable);
+        if (row.slider.isEnabled() != enable) {
+            row.slider.setEnabled(enable);
+            if (mVolumeGradient != null) applyVolumeGradient(row);
+        }
         updateVolumeRowTintH(row, row.stream == mActiveStream);
         if (row.tracking) {
             return;  // don't update if user is sliding
@@ -3126,6 +3178,7 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
         private View view;
         private TextView header;
         private ImageButton icon;
+        private LayerDrawable progressLayers;
         private Drawable sliderProgressSolid;
         private AlphaTintDrawableWrapper sliderProgressIcon;
         private SeekBar slider;
