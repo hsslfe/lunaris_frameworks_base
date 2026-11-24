@@ -66,6 +66,12 @@ fun BatteryWithPercent(
         else colorProfile.light.fill
     }
 
+    val iconHeight = if (viewModel.batteryIconStyle == BatteryRepository.ICON_STYLE_NEON_RING) {
+        batteryHeight * NEON_RING_SCALE
+    } else {
+        batteryHeight
+    }
+
     Row(
         modifier =
             modifier.wrapContentWidth().onLayoutRectChanged { relativeLayoutBounds ->
@@ -79,7 +85,7 @@ fun BatteryWithPercent(
             UnifiedBattery(
                 viewModel = viewModel,
                 isDarkProvider = isDarkProvider,
-                modifier = Modifier.height(batteryHeight).wrapContentWidth(),
+                modifier = Modifier.height(iconHeight).wrapContentWidth(),
             )
         }
 
