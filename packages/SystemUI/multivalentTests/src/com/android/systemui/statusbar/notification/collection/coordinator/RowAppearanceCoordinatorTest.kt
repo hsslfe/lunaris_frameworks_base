@@ -21,6 +21,8 @@ import android.testing.TestableLooper.RunWithLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.kosmos.testScope
+import com.android.systemui.shared.settings.data.repository.systemSettingsRepository
 import com.android.systemui.shared.notifications.domain.interactor.NotificationSettingsInteractor
 import com.android.systemui.statusbar.notification.AssistantFeedbackController
 import com.android.systemui.statusbar.notification.FeedbackIcon
@@ -44,6 +46,7 @@ import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.withArgCaptor
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -89,6 +92,8 @@ class RowAppearanceCoordinatorTest : SysuiTestCase() {
         coordinator =
             RowAppearanceCoordinator(
                 mContext,
+                kosmos.testScope.backgroundScope,
+                kosmos.systemSettingsRepository,
                 assistantFeedbackController,
                 sectionStyleProvider,
                 kosmos.notifCollection,
@@ -134,6 +139,15 @@ class RowAppearanceCoordinatorTest : SysuiTestCase() {
         verify(controller1).setSystemExpanded(eq(true))
         afterRenderEntryListener.onAfterRenderEntry(entry2, controller2)
         verify(controller2).setSystemExpanded(eq(false))
+    }
+
+    @Test
+    fun firstNotificationStaysCollapsedWhenDisabled() = kosmos.testScope.runTest {
+        kosmos.systemSettingsRepository.setInt("notification_expand_first", 0)
+        testScheduler.runCurrent()
+        beforeRenderListListener.onBeforeRenderList(listOf(entry1, entry2))
+        afterRenderEntryListener.onAfterRenderEntry(entry1, controller1)
+        verify(controller1).setSystemExpanded(false)
     }
 
     @Test
