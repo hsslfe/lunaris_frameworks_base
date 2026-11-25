@@ -12,6 +12,12 @@ import org.lunaris.clockmaker.spatial.SpatialWallpaperMotion;
 
 public final class SpatialEffectController implements ParallaxTiltSensor.Listener {
     private static final String SENSITIVITY = "system:depth_wallpaper_spatial_sensitivity";
+    private static final float BACKGROUND_TRAVEL = 0.50f;
+    private static final float SUBJECT_TRAVEL = 0.60f;
+    private final float maxTravelX;
+    private final float maxTravelY;
+    private float horizontal;
+    private float vertical;
     private final SpatialWallpaperMotion motion;
     private final TunerService tuner;
     private final int[] parentLocation = new int[2];
@@ -30,12 +36,18 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
 
     public SpatialEffectController(Context context) {
         tuner = Dependency.get(TunerService.class);
+        float density = context.getResources().getDisplayMetrics().density;
+        maxTravelX = 24f * density;
+        maxTravelY = 18f * density;
         motion = new SpatialWallpaperMotion(context, (x, y, scale) -> {
-            applyPose(background, x, y);
-            applyPose(subject, x, y);
+            horizontal = x;
+            vertical = y;
             if (spatialScale != scale) {
                 spatialScale = scale;
                 applyScale();
+            } else {
+                applyTranslation(background);
+                applyTranslation(subject);
             }
         });
     }
@@ -66,7 +78,7 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
     public void setActive(boolean active) { setActive(active, true); }
     public void setActive(boolean active, boolean animate) {
         requested = active;
-        motion.setActive(active && hasDepth(background) && hasDepth(subject), animate);
+        motion.setActive(active && hasLayer(background) && hasLayer(subject), animate);
     }
 
     public void onLayersChanged() { motion.dispatchPose(); applyScale(); }
@@ -83,15 +95,8 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
         background = subject = null;
     }
 
-    private static boolean hasDepth(View view) {
-        return view != null && view.getBackground() instanceof SpatialWallpaperDrawable
-                && ((SpatialWallpaperDrawable) view.getBackground()).hasSpatialDepth();
-    }
-
-    private static void applyPose(View view, float x, float y) {
-        if (view != null && view.getBackground() instanceof SpatialWallpaperDrawable) {
-            ((SpatialWallpaperDrawable) view.getBackground()).setTilt(x, y);
-        }
+    private static boolean hasLayer(View view) {
+        return view != null && view.getBackground() != null;
     }
 
     private void applyScale() { applyScale(background); applyScale(subject); }
@@ -107,9 +112,15 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
         }
         view.setScaleX(zoom * spatialScale);
         view.setScaleY(zoom * spatialScale);
-        view.setTranslationX(zoom * (1f - spatialScale)
+        applyTranslation(view);
+    }
+
+    private void applyTranslation(View view) {
+        if (view == null) return;
+        float travel = view == background ? BACKGROUND_TRAVEL : SUBJECT_TRAVEL;
+        view.setTranslationX(horizontal * maxTravelX * travel + zoom * (1f - spatialScale)
                 * (view.getWidth() / 2f - view.getPivotX()));
-        view.setTranslationY(zoom * (1f - spatialScale)
+        view.setTranslationY(vertical * maxTravelY * travel + zoom * (1f - spatialScale)
                 * (view.getHeight() / 2f - view.getPivotY()));
     }
 }

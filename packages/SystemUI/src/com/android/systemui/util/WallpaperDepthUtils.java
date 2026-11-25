@@ -62,7 +62,6 @@ import com.android.systemui.tuner.TunerService;
 
 import java.io.File;
 
-import org.lunaris.clockmaker.spatial.SpatialWallpaperScene;
 
 public class WallpaperDepthUtils {
 
@@ -747,7 +746,7 @@ public class WallpaperDepthUtils {
                     && mSubjectWallpaperId == getLockWallpaperId(mSubjectUserId)
                     && java.util.Objects.equals(mLoadedSubjectPath, mWallpaperSubjectPath);
             if (keepLayers) {
-                if (mLoadWallpaperTask != null) mLoadWallpaperTask.cancelLoading();
+                if (mLoadWallpaperTask != null) mLoadWallpaperTask.cancel(false);
             } else {
                 clearDepthWallpaper();
             }
@@ -761,7 +760,7 @@ public class WallpaperDepthUtils {
 
     private void clearDepthWallpaper() {
         if (mLoadWallpaperTask != null) {
-            mLoadWallpaperTask.cancelLoading();
+            mLoadWallpaperTask.cancel(false);
             mLoadWallpaperTask = null;
         }
         mWallpaperLoaded = false;
@@ -906,9 +905,6 @@ public class WallpaperDepthUtils {
         private final Rect mDisplayBounds;
         private final float mDensity;
         private final boolean mSpatial;
-        private final int mWallpaperId;
-        private volatile ParcelFileDescriptor mSpatialDescriptor;
-        private volatile boolean mPreviewPublished;
 
         LoadWallpaperTask(String subjectPath, int offsetX, int offsetY, int userId) {
             mSubjectPath = subjectPath;
@@ -918,65 +914,6 @@ public class WallpaperDepthUtils {
             mDisplayBounds = getDepthWallpaperBounds();
             mDensity = mContext.getResources().getDisplayMetrics().density;
             mSpatial = mSpatialEffectEnabled;
-            mWallpaperId = mSubjectWallpaperId;
-        }
-
-        void cancelLoading() {
-            cancel(false);
-            ParcelFileDescriptor descriptor = mSpatialDescriptor;
-            if (descriptor != null) {
-                try {
-                    descriptor.closeWithError("Spatial request superseded");
-                } catch (java.io.IOException ignored) { }
-            }
-        }
-
-        private SpatialWallpaperScene loadSpatialScene() {
-            if (!mSpatial || isCancelled()) return null;
-            try {
-                Context userContext = mContext.createContextAsUser(UserHandle.of(mUserId), 0);
-                mSpatialDescriptor = userContext.getContentResolver().openFileDescriptor(
-                        SpatialWallpaperScene.request(mSubjectPath, mWallpaperId,
-                                mDisplayBounds.width(), mDisplayBounds.height(), mDensity,
-                                mSubjectOffsetX, mSubjectOffsetY), "r");
-                if (mSpatialDescriptor == null) return null;
-                if (isCancelled()) {
-                    mSpatialDescriptor.closeWithError("Spatial request superseded");
-                    return null;
-                }
-                return SpatialWallpaperScene.read(mSpatialDescriptor);
-            } catch (Exception e) {
-                if (!isCancelled()) Log.w("WallpaperDepthUtils", "Spatial scene unavailable; using still layers", e);
-                return null;
-            } finally {
-                ParcelFileDescriptor descriptor = mSpatialDescriptor;
-                mSpatialDescriptor = null;
-                if (descriptor != null) {
-                    try {
-                        descriptor.close();
-                    } catch (java.io.IOException ignored) { }
-                }
-            }
-        }
-
-        private void publishStillPreview(Bitmap bitmap) {
-            if (!mSpatial) return;
-            mMainHandler.post(() -> {
-                if (mLoadWallpaperTask != this || isCancelled() || mWallpaperLoaded
-                        || mUserId != mUserTracker.getUserId()
-                        || mWallpaperId != getLockWallpaperId(mUserId)) return;
-                mPreviewPublished = true;
-                mLockScreenSubject.setBackground(new AmbientSubjectDrawable(bitmap));
-                mLockScreenSubject.getBackground().setAlpha(mDWallOpacity);
-                mLockScreenBackground.setBackground(null);
-                applyBottomFade();
-                applyFadeCurve();
-                applyBottomInset();
-                mWallpaperLoaded = true;
-                mLoadedBounds = new Rect(mDisplayBounds);
-                mLoadedSubjectPath = mSubjectPath;
-                updateDepthWallpaperVisibility();
-            });
         }
 
         @Override
@@ -1009,23 +946,6 @@ public class WallpaperDepthUtils {
                     return null;
                 }
 
-                publishStillPreview(resizedBitmap);
-                SpatialWallpaperScene scene = loadSpatialScene();
-                if (isCancelled()) {
-                    if (!mPreviewPublished) resizedBitmap.recycle();
-                    if (scene != null) scene.background.recycle();
-                    return null;
-                }
-                if (scene != null) {
-                    SpatialWallpaperDrawable background = new SpatialWallpaperDrawable(
-                            scene.background, scene.backgroundDepth, scene.depthWidth,
-                            scene.depthHeight);
-                    background.setSubjectUnderlay(resizedBitmap, scene.subjectDepth,
-                            scene.depthWidth, scene.depthHeight);
-                    return new WallpaperLayers(background, new AmbientSubjectDrawable(
-                            resizedBitmap, scene.subjectDepth, scene.depthWidth, scene.depthHeight));
-                }
-
                 Drawable bitmapDrawable = new AmbientSubjectDrawable(resizedBitmap);
 
                 if (isCancelled()) return null;
@@ -1036,8 +956,8 @@ public class WallpaperDepthUtils {
                     Bitmap resizedBg =
                             getResizedBitmap(
                                     bgRaw,
-                                    0,
-                                    0,
+                                    mSpatial ? mSubjectOffsetX : 0,
+                                    mSpatial ? mSubjectOffsetY : 0,
                                     mDisplayBounds,
                                     mDensity);
 
