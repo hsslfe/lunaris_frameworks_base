@@ -17,9 +17,11 @@
 package com.android.systemui.statusbar.notification.collection.coordinator
 
 import android.content.Context
+import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shared.notifications.domain.interactor.NotificationSettingsInteractor
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.statusbar.notification.AssistantFeedbackController
 import com.android.systemui.statusbar.notification.collection.BundleEntry
 import com.android.systemui.statusbar.notification.collection.NotifCollection
@@ -27,9 +29,12 @@ import com.android.systemui.statusbar.notification.collection.NotifPipeline
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.collection.PipelineEntry
 import com.android.systemui.statusbar.notification.collection.coordinator.dagger.CoordinatorScope
+import com.android.systemui.statusbar.notification.collection.listbuilder.pluggable.Invalidator
 import com.android.systemui.statusbar.notification.collection.provider.SectionStyleProvider
 import com.android.systemui.statusbar.notification.collection.render.NotifRowController
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * A small coordinator which updates the notif rows with data related to the current shade after
@@ -40,6 +45,8 @@ class RowAppearanceCoordinator
 @Inject
 constructor(
     @ShadeDisplayAware context: Context,
+    @Application private val scope: CoroutineScope,
+    private val systemSettings: SystemSettingsRepository,
     private var mAssistantFeedbackController: AssistantFeedbackController,
     private var mSectionStyleProvider: SectionStyleProvider,
     private val notifCollection: NotifCollection,
@@ -61,10 +68,22 @@ constructor(
      * possible. If `false`, then the first non-group expandable notification should not be
      * expanded.
      */
-    private val mAutoExpandFirstNotification =
+    private val defaultAutoExpandFirst =
         context.resources.getBoolean(R.bool.config_autoExpandFirstNotification)
 
+    private var mAutoExpandFirstNotification = defaultAutoExpandFirst
+
     override fun attach(pipeline: NotifPipeline) {
+        val invalidator = object : Invalidator("first notification expansion") {}
+        pipeline.addPreRenderInvalidator(invalidator)
+        scope.launch {
+            systemSettings.boolSetting("notification_expand_first", defaultAutoExpandFirst).collect { enabled ->
+                if (mAutoExpandFirstNotification != enabled) {
+                    mAutoExpandFirstNotification = enabled
+                    invalidator.invalidateList("first notification expansion changed")
+                }
+            }
+        }
         pipeline.addOnBeforeRenderListListener(::onBeforeRenderList)
         pipeline.addOnAfterRenderListListener(::onAfterRenderList)
         pipeline.addOnAfterRenderEntryListener(::onAfterRenderEntry)
