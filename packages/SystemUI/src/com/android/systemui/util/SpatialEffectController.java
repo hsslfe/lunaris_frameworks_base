@@ -12,8 +12,6 @@ import org.lunaris.clockmaker.spatial.SpatialWallpaperMotion;
 
 public final class SpatialEffectController implements ParallaxTiltSensor.Listener {
     private static final String SENSITIVITY = "system:depth_wallpaper_spatial_sensitivity";
-    private static final float BACKGROUND_TRAVEL = 0.50f;
-    private static final float SUBJECT_TRAVEL = 0.60f;
     private final float maxTravelX;
     private final float maxTravelY;
     private float horizontal;
@@ -37,8 +35,8 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
     public SpatialEffectController(Context context) {
         tuner = Dependency.get(TunerService.class);
         float density = context.getResources().getDisplayMetrics().density;
-        maxTravelX = 24f * density;
-        maxTravelY = 18f * density;
+        maxTravelX = 12f * density;
+        maxTravelY = 9f * density;
         motion = new SpatialWallpaperMotion(context, (x, y, scale) -> {
             horizontal = x;
             vertical = y;
@@ -117,10 +115,10 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
 
     private void applyTranslation(View view) {
         if (view == null) return;
-        float travel = view == background ? BACKGROUND_TRAVEL : SUBJECT_TRAVEL;
-        view.setTranslationX(horizontal * maxTravelX * travel + zoom * (1f - spatialScale)
+        // The original photo contains the subject, so both layers must track the same pose.
+        view.setTranslationX(horizontal * maxTravelX + zoom * (1f - spatialScale)
                 * (view.getWidth() / 2f - view.getPivotX()));
-        view.setTranslationY(vertical * maxTravelY * travel + zoom * (1f - spatialScale)
+        view.setTranslationY(vertical * maxTravelY + zoom * (1f - spatialScale)
                 * (view.getHeight() / 2f - view.getPivotY()));
     }
 }
