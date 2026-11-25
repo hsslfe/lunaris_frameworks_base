@@ -345,6 +345,11 @@ public class WallpaperDepthUtils {
             return;
         }
         mDynamicBarExpanded = expanded;
+        // The full wallpaper already includes the subject. Hide the clock overlay
+        // before the panel's first frame, keeping the background at its current tilt.
+        if (expanded && mLockScreenSubject != null) {
+            mLockScreenSubject.setVisibility(View.GONE);
+        }
         updateDepthWallpaperVisibility();
     }
 
@@ -616,7 +621,7 @@ public class WallpaperDepthUtils {
                 mAppliedAmbientBlurRadius = blurRadius;
             }
             mLockScreenSubject.setVisibility(
-                    showDepth || showAmbient ? View.VISIBLE : View.GONE);
+                    !mDynamicBarExpanded && (showDepth || showAmbient) ? View.VISIBLE : View.GONE);
             mLockScreenBackground.setVisibility(
                     showDepth || showAmbient ? View.VISIBLE : View.GONE);
         });
