@@ -68,6 +68,7 @@ internal fun ColorOsPopupMotion(
     fastEnter: Boolean,
     useRedesignedMediaBackground: Boolean,
     allowOutsideInteraction: Boolean,
+    pageScale: () -> Float,
     secondaryContent: @Composable () -> Unit,
     swipe: NotificationPopupSwipe? = null,
     content: @Composable () -> Unit,
@@ -273,9 +274,7 @@ internal fun ColorOsPopupMotion(
                     background =
                         if (useRedesignedMediaBackground) {
                             {
-                                Box(Modifier.matchParentSize()) {
-                                    RedesignedMediaPopupBackground(popupShape)
-                                }
+                                PagingMediaPopupBackground(popupShape)
                             }
                         } else null,
                 ) {
@@ -340,11 +339,13 @@ internal fun ColorOsPopupMotion(
             )
         layout(constraints.maxWidth, constraints.maxHeight) {
             card.placeWithLayer(targetLeft.roundToInt(), targetTop.roundToInt()) {
+                val swipeScale = pageScale()
                 transformOrigin = TransformOrigin.Center
-                scaleX = cardScale
-                scaleY = cardScale
+                scaleX = cardScale * swipeScale
+                scaleY = cardScale * (1f - (1f - swipeScale) * 1.65f)
                 translationX = frame.center.x - destination.center.x
-                translationY = frame.center.y - destination.center.y
+                translationY = frame.center.y - destination.center.y -
+                    (1f - swipeScale) * 1.65f * cardScale * card.height / 2f
                 this.alpha = surfaceAlpha
                 shape = revealShape
                 clip = revealFraction < 1f
