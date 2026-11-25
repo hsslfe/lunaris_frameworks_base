@@ -345,12 +345,7 @@ public class WallpaperDepthUtils {
             return;
         }
         mDynamicBarExpanded = expanded;
-        if (expanded) {
-            hideDepthWallpaper();
-        } else {
-            updateDepthWallpaperVisibility();
-        }
-        updateSpatialEffectActive();
+        updateDepthWallpaperVisibility();
     }
 
     public void onGlanceableHubShowingChanged(boolean showing) {
@@ -570,7 +565,7 @@ public class WallpaperDepthUtils {
                 && mHasWallpaperZoom
                 && !mBouncerShowing
                 && !mGlanceableHubShowing
-                && !mDynamicBarExpanded
+                && (!mDynamicBarExpanded || mSpatialEffectEnabled)
                 && !mUnlocking
                 && mContext.getResources().getConfiguration().orientation
                         != Configuration.ORIENTATION_LANDSCAPE
