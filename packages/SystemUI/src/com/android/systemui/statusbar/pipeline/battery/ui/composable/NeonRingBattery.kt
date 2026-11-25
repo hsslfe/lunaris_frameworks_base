@@ -55,7 +55,7 @@ internal fun NeonRingBattery(
     val textMeasurer = rememberTextMeasurer()
     val charging = attr is BatteryGlyph.Bolt || attr is BatteryGlyph.Defend
     // Each runs only while it shows
-    val spin = if (charging && prefs.chargingSpark) neonRingSpin() else null
+    val spin = if (prefs.alwaysShowSpark || (charging && prefs.chargingSpark)) neonRingSpin() else null
     val pulse = if (!charging && (levelProvider() ?: 100) < 10) neonRingPulse() else null
     Canvas(modifier = modifier, contentDescription = contentDescription) {
         val level = levelProvider()
@@ -68,6 +68,7 @@ internal fun NeonRingBattery(
         val radius = size.height / 2f - stroke * 1.1f
         val center = Offset(size.width / 2, size.height / 2)
         val color = when (prefs.colorMode) {
+            3 -> Color(prefs.customRingColor)
             2 -> colors.attribution
             1 -> accent
             else -> when {
@@ -93,7 +94,12 @@ internal fun NeonRingBattery(
         }
         if (spin != null) {
             val a = Math.toRadians((spin.value - 90f).toDouble())
-            drawCircle(if (lightBar) colors.attribution else Color.White, stroke * 0.75f,
+            val sparkColor = when {
+                prefs.sparkColor != 0 -> Color(prefs.sparkColor)
+                lightBar -> colors.attribution
+                else -> Color.White
+            }
+            drawCircle(sparkColor, stroke * 0.75f,
                 Offset(center.x + radius * kotlin.math.cos(a).toFloat(),
                     center.y + radius * kotlin.math.sin(a).toFloat()))
         }
