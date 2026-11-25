@@ -58,7 +58,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.suspendCancellableCoroutine
 import lineageos.providers.LineageSettings
 
-data class NeonRingOptions(val colorMode: Int = 0, val chargingSpark: Boolean = true)
+data class NeonRingOptions(
+    val colorMode: Int = 0,
+    val chargingSpark: Boolean = true,
+    val alwaysShowSpark: Boolean = false,
+    val customRingColor: Int = android.graphics.Color.WHITE,
+    val sparkColor: Int = android.graphics.Color.TRANSPARENT,
+)
 
 /** Repository-style state for battery information. */
 interface BatteryRepository {
@@ -341,7 +347,12 @@ constructor(
     override val neonRingOptions = combine(
         settingsRepository.intSetting("status_bar_battery_ring_color"),
         settingsRepository.boolSetting("status_bar_battery_ring_spark", true),
-    ) { color, spark -> NeonRingOptions(color, spark) }
+        settingsRepository.boolSetting("status_bar_battery_ring_spark_always"),
+        settingsRepository.intSetting("status_bar_battery_ring_custom_color", android.graphics.Color.WHITE),
+        settingsRepository.intSetting("status_bar_battery_ring_spark_color"),
+    ) { mode, charging, always, ring, spark ->
+        NeonRingOptions(mode, charging, always, ring, spark)
+    }
 
     override val batteryIconStyle =
         combine(
