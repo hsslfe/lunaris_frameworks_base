@@ -261,6 +261,9 @@ fun AxDynamicBarChip(
                     }
                 val useCircleStyle = chipStyle == 1 &&
                         !isAlert &&
+                        // Unlock must occupy the full main pill, even when the
+                        // user selected circular chips for other activities.
+                        event !is IslandEvent.BiometricUnlock &&
                         event !is IslandEvent.AudioRecording &&
                         event !is IslandEvent.Timer &&
                         event !is IslandEvent.Stopwatch &&
