@@ -49,6 +49,7 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
+import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
 import android.app.BroadcastOptions;
@@ -4493,6 +4494,56 @@ public class KeyguardViewMediator implements CoreStartable,
         }
     }
 
+    /**
+     * LockStyles owns its lockscreen-to-card animation. Do not run the keyguard
+     * launch animator on top of it or reset its surface at the end of that animation.
+     * Only an opaque gallery task opening by itself is eligible.
+     */
+    boolean finishLockStylesOcclusion(TransitionInfo info, Transaction t,
+            IRemoteTransitionFinishedCallback finishCallback) throws RemoteException {
+        ActivityManager.RunningTaskInfo galleryTask = null;
+        for (TransitionInfo.Change change : info.getChanges()) {
+            if (change.getMode() != WindowManager.TRANSIT_OPEN
+                    && change.getMode() != WindowManager.TRANSIT_TO_FRONT) {
+                continue;
+            }
+            final ActivityManager.RunningTaskInfo task = change.getTaskInfo();
+            if (task == null) continue;
+            final ComponentName activity = task.topActivity;
+            if (activity == null
+                    || !"org.lunaris.lockstyles".equals(activity.getPackageName())
+                    || !"org.lunaris.lockstyles.ui.LockScreenGalleryActivity".equals(
+                            activity.getClassName())
+                    || (change.getFlags() & TransitionInfo.FLAG_TRANSLUCENT) != 0) {
+                return false;
+            }
+            galleryTask = task;
+        }
+        if (galleryTask == null) return false;
+
+        // Show the actual app surface before updating keyguard visibility. The shell
+        // finish transaction still performs normal reparenting and cleanup.
+        for (TransitionInfo.Change change : info.getChanges()) {
+            if (change.getMode() == WindowManager.TRANSIT_OPEN
+                    || change.getMode() == WindowManager.TRANSIT_TO_FRONT) {
+                if (change.getTaskInfo() != null
+                        && change.getTaskInfo().taskId == galleryTask.taskId) {
+                    t.show(change.getLeash());
+                    t.setAlpha(change.getLeash(), 1f);
+                }
+            }
+        }
+        t.apply();
+        if (KeyguardWmStateRefactor.isEnabled()) {
+            mWmOcclusionManager.getKeyguardOcclusionInteractor()
+                    .setWmNotifiedShowWhenLockedActivityOnTop(true, galleryTask);
+        } else {
+            setOccluded(true, false);
+        }
+        finishCallback.onTransitionFinished(null, null);
+        return true;
+    }
+
     private IRemoteTransition validatingRemoteTransition(IRemoteTransition delegate) {
         return new RemoteTransitionStub() {
             @Override
@@ -4502,6 +4553,8 @@ public class KeyguardViewMediator implements CoreStartable,
                     Log.w(TAG, "Skipping remote transition - view root not ready");
                     return;
                 }
+
+                if (finishLockStylesOcclusion(info, t, finishCallback)) return;
 
                 delegate.startAnimation(token, info, t, finishCallback);
             }
