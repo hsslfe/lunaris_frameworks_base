@@ -25,6 +25,7 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.applicationCoroutineScope
 import com.android.systemui.minmode.minModeManager
+import com.android.systemui.power.domain.interactor.powerInteractor
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.shade.ui.viewmodel.notificationShadeWindowModel
 import com.android.systemui.statusbar.notification.icon.ui.viewmodel.notificationIconContainerAlwaysOnDisplayViewModel
@@ -42,6 +43,7 @@ val Kosmos.keyguardRootViewModel by Fixture {
         keyguardInteractor = keyguardInteractor,
         communalInteractor = communalInteractor,
         keyguardTransitionInteractor = keyguardTransitionInteractor,
+        powerInteractor = powerInteractor,
         notificationsKeyguardInteractor = notificationsKeyguardInteractor,
         pulseExpansionInteractor = pulseExpansionInteractor,
         aodPromotedNotificationInteractor = aodPromotedNotificationInteractor,

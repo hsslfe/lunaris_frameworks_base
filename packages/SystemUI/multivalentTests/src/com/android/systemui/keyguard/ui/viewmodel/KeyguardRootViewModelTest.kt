@@ -49,6 +49,10 @@ import com.android.systemui.kosmos.collectLastValue
 import com.android.systemui.kosmos.runCurrent
 import com.android.systemui.kosmos.runTest
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.power.data.repository.fakePowerRepository
+import com.android.systemui.power.shared.model.ScreenPowerState
+import com.android.systemui.power.shared.model.WakeSleepReason
+import com.android.systemui.power.shared.model.WakefulnessState
 import com.android.systemui.scene.data.repository.Idle
 import com.android.systemui.scene.data.repository.sceneContainerRepository
 import com.android.systemui.scene.data.repository.setSceneTransition
@@ -372,6 +376,70 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
 
             keyguardRepository.topClippingBounds.value = 1000
             assertThat(topClippingBounds).isNull()
+        }
+
+    @Test
+    @DisableSceneContainer
+    fun alpha_lockscreenSleep_keepsContentHiddenUntilWakeTransition() =
+        testScope.runTest {
+            val powerRepository = kosmos.fakePowerRepository
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+            keyguardRepository.setAodAvailable(false)
+            val alpha by collectLastValue(underTest.alpha(viewState))
+            runCurrent()
+            assertThat(alpha).isEqualTo(1f)
+
+            powerRepository.updateWakefulness(
+                WakefulnessState.ASLEEP,
+                WakeSleepReason.POWER_BUTTON,
+                WakeSleepReason.POWER_BUTTON,
+                false,
+            )
+            keyguardTransitionRepository.sendTransitionSteps(
+                KeyguardState.LOCKSCREEN,
+                KeyguardState.DOZING,
+                testScope,
+            )
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
+            runCurrent()
+            assertThat(alpha).isEqualTo(0f)
+
+            powerRepository.updateWakefulness(
+                WakefulnessState.STARTING_TO_WAKE,
+                WakeSleepReason.POWER_BUTTON,
+                WakeSleepReason.POWER_BUTTON,
+                false,
+            )
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+            runCurrent()
+            assertThat(alpha).isEqualTo(0f)
+
+            keyguardTransitionRepository.sendTransitionStepsThroughRunning(
+                KeyguardState.DOZING,
+                KeyguardState.LOCKSCREEN,
+                testScope,
+                throughValue = 0.25f,
+            )
+            assertThat(alpha!!).isAtMost(0.25f)
+
+            keyguardTransitionRepository.sendTransitionSteps(
+                listOf(
+                    TransitionStep(
+                        KeyguardState.DOZING,
+                        KeyguardState.LOCKSCREEN,
+                        1f,
+                        TransitionState.RUNNING,
+                    ),
+                    TransitionStep(
+                        KeyguardState.DOZING,
+                        KeyguardState.LOCKSCREEN,
+                        1f,
+                        TransitionState.FINISHED,
+                    ),
+                ),
+                testScope,
+            )
+            assertThat(alpha).isEqualTo(1f)
         }
 
     @Test

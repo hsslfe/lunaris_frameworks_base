@@ -34,14 +34,19 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInterac
 import com.android.systemui.keyguard.domain.interactor.PulseExpansionInteractor
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.AOD
+import com.android.systemui.keyguard.shared.model.KeyguardState.DOZING
 import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.KeyguardState.OFF
 import com.android.systemui.keyguard.shared.model.KeyguardState.PRIMARY_BOUNCER
+import com.android.systemui.keyguard.shared.model.TransitionState.FINISHED
 import com.android.systemui.keyguard.shared.model.TransitionState.RUNNING
 import com.android.systemui.keyguard.shared.model.TransitionState.STARTED
+import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.keyguard.ui.StateToValue
 import com.android.systemui.minmode.MinModeManager
+import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -78,6 +83,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 
 @SysUISingleton
@@ -90,6 +96,7 @@ constructor(
     private val keyguardInteractor: KeyguardInteractor,
     communalInteractor: CommunalInteractor,
     keyguardTransitionInteractor: KeyguardTransitionInteractor,
+    powerInteractor: PowerInteractor,
     private val notificationsKeyguardInteractor: NotificationsKeyguardInteractor,
     private val pulseExpansionInteractor: PulseExpansionInteractor,
     notificationShadeWindowModel: NotificationShadeWindowModel,
@@ -234,6 +241,65 @@ constructor(
                 .onStart { emit(false) },
         )
 
+    private data class LockscreenWakeReveal(
+        val fromLockscreen: Boolean = false,
+        val step: TransitionStep = TransitionStep(),
+        val startProgress: Float = 0f,
+    )
+
+    // Unlike a sleep from GONE, a sleep from LOCKSCREEN may leave the previous root
+    // alpha visible until doze finishes. Keep that content hidden across screen-on,
+    // then bound its opacity by the actual wake animation rather than a fixed delay.
+    private val lockscreenWakeAlphaLimit: Flow<Float> =
+        combine(
+                keyguardTransitionInteractor.transitionState.runningFold(
+                    LockscreenWakeReveal()
+                ) { previous, step ->
+                    when {
+                        step.from == LOCKSCREEN && step.to == DOZING ->
+                            LockscreenWakeReveal(fromLockscreen = true, step = step)
+                        previous.fromLockscreen && step.from == DOZING && step.to == LOCKSCREEN ->
+                            LockscreenWakeReveal(
+                                fromLockscreen = true,
+                                step = step,
+                                startProgress =
+                                    if (previous.step.from == DOZING &&
+                                        previous.step.to == LOCKSCREEN &&
+                                        step.transitionState != STARTED
+                                    ) {
+                                        previous.startProgress
+                                    } else {
+                                        step.value
+                                    },
+                            )
+                        else -> LockscreenWakeReveal()
+                    }
+                },
+                powerInteractor.detailedWakefulness,
+                powerInteractor.screenPowerState,
+                keyguardInteractor.isAodAvailable,
+            ) { reveal, wakefulness, screenPowerState, aodAvailable ->
+                val step = reveal.step
+                when {
+                    aodAvailable || !reveal.fromLockscreen -> 1f
+                    step.to == DOZING ->
+                        if (screenPowerState == ScreenPowerState.SCREEN_OFF ||
+                            wakefulness.isAwake()
+                        ) {
+                            0f
+                        } else {
+                            // Leave screen-off animation and doze pulses unchanged.
+                            1f
+                        }
+                    step.transitionState == FINISHED -> 1f
+                    reveal.startProgress >= 1f -> 0f
+                    else ->
+                        ((step.value - reveal.startProgress) / (1f - reveal.startProgress))
+                            .coerceIn(0f, 1f)
+                }
+            }
+            .distinctUntilChanged()
+
     private val zoomOutFromGlanceableHub: Flow<Float> =
         if (!Flags.gestureBetweenHubAndLockscreenMotion()) {
                 emptyFlow()
@@ -315,6 +381,7 @@ constructor(
     fun alpha(viewState: ViewStateAccessor): Flow<Float> {
         return combine(
                 hideKeyguard,
+                lockscreenWakeAlphaLimit,
                 // The transitions are mutually exclusive, so they are safe to merge to get the last
                 // value emitted by any of them. Do not add flows that cannot make this guarantee.
                 merge(
@@ -366,11 +433,11 @@ constructor(
                         primaryBouncerToLockscreenTransitionViewModel.lockscreenAlpha(viewState),
                     )
                     .onStart { emit(0f) },
-            ) { hideKeyguard, alpha ->
+            ) { hideKeyguard, wakeAlphaLimit, alpha ->
                 if (hideKeyguard) {
                     0f
                 } else {
-                    alpha
+                    minOf(alpha, wakeAlphaLimit)
                 }
             }
             .distinctUntilChanged()
