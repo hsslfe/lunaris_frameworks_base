@@ -43,12 +43,20 @@ internal fun CompactMediaActions(
     playPauseSize: Dp = 48.dp,
     playPauseIconSize: Dp = 28.dp,
     animatePlayPause: Boolean = true,
+    allowCompactNavigation: Boolean = false,
 ) {
     val secondaryOnly =
         session?.actionButtonLayout == MediaCardActionButtonLayout.SecondaryActionsOnly
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         BoxWithConstraints(modifier.fillMaxWidth().heightIn(min = maxOf(48.dp, playPauseSize))) {
-            val showNavigation = maxWidth >= 96.dp + maxOf(48.dp, playPauseSize)
+            val fullNavigationWidth = 96.dp + maxOf(48.dp, playPauseSize)
+            // Compact QS cards can fit three controls even when three 48dp slots do not fit.
+            // Keep the full-height targets and divide the available width without overlap.
+            val compactNavigation =
+                allowCompactNavigation && !secondaryOnly &&
+                    maxWidth < fullNavigationWidth && maxWidth >= 108.dp
+            val showNavigation = maxWidth >= fullNavigationWidth || compactNavigation
+            val compactSlotWidth = maxWidth / 3
             val actions =
                 when {
                     secondaryOnly ->
@@ -67,9 +75,17 @@ internal fun CompactMediaActions(
             ) {
                 actions.forEachIndexed { index, action ->
                     val primary = !secondaryOnly && (!showNavigation || index == 1)
-                    val size = if (primary) playPauseSize else 48.dp
+                    val preferredSize = if (primary) playPauseSize else 48.dp
+                    val size =
+                        if (compactNavigation) minOf(preferredSize, compactSlotWidth)
+                        else preferredSize
                     Box(
-                        modifier = Modifier.size(maxOf(48.dp, size)),
+                        modifier =
+                            if (compactNavigation) {
+                                Modifier.weight(1f).heightIn(min = 48.dp)
+                            } else {
+                                Modifier.size(maxOf(48.dp, size))
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (secondaryOnly && action != null) {

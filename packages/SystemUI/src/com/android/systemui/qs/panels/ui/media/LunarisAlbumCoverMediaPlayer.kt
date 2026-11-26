@@ -145,6 +145,7 @@ internal fun LunarisAlbumCoverMediaPlayer(
             foreground = foreground,
             interactive = interactive,
             animatePlayPause = lockscreen,
+            allowCompactNavigation = !lockscreen,
         )
     }
 }
