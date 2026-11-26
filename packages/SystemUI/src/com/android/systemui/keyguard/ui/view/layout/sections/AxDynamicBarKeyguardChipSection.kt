@@ -91,6 +91,8 @@ constructor(
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
             View(context).apply {
+                setBackgroundColor(0x66000000)
+                alpha = 0f
                 id = dismissViewId
                 visibility = View.GONE
                 isFocusable = false
@@ -230,6 +232,8 @@ constructor(
         expanded: Boolean,
         lowUdfps: Boolean,
     ) {
+        val scrim = constraintLayout.requireViewById<View>(dismissViewId)
+        scrim.animate().alpha(if (expanded) 1f else 0f).setDuration(200L).start()
         if (expanded) {
             expandedExitPending = true
         } else if (!expanded && expandedExitPending) {
@@ -301,10 +305,7 @@ constructor(
                 v.visibility = visibility
             }
         }
-        WallpaperDepthUtils.get()?.let {
-            if (visibility == View.INVISIBLE) it.hideDepthWallpaper()
-            else it.updateDepthWallpaperVisibility()
-        }
+
     }
 
     private fun enforceHidden(constraintLayout: ConstraintLayout) {
@@ -317,7 +318,6 @@ constructor(
                 v.visibility = View.INVISIBLE
             }
         }
-        WallpaperDepthUtils.get()?.hideDepthWallpaper()
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
