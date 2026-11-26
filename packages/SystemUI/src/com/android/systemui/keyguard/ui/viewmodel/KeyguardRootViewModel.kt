@@ -242,13 +242,13 @@ constructor(
         )
 
     private data class LockscreenWakeReveal(
-        val fromLockscreen: Boolean = false,
+        val fromSleep: Boolean = false,
         val step: TransitionStep = TransitionStep(),
         val startProgress: Float = 0f,
     )
 
-    // Unlike a sleep from GONE, a sleep from LOCKSCREEN may leave the previous root
-    // alpha visible until doze finishes. Keep that content hidden across screen-on,
+    // Use the same non-AOD wake reveal whether the device went to sleep from the
+    // lockscreen or from an unlocked screen. Keep content hidden across screen-on,
     // then bound its opacity by the actual wake animation rather than a fixed delay.
     private val lockscreenWakeAlphaLimit: Flow<Float> =
         combine(
@@ -256,11 +256,11 @@ constructor(
                     LockscreenWakeReveal()
                 ) { previous, step ->
                     when {
-                        step.from == LOCKSCREEN && step.to == DOZING ->
-                            LockscreenWakeReveal(fromLockscreen = true, step = step)
-                        previous.fromLockscreen && step.from == DOZING && step.to == LOCKSCREEN ->
+                        (step.from == LOCKSCREEN || step.from == GONE) && step.to == DOZING ->
+                            LockscreenWakeReveal(fromSleep = true, step = step)
+                        previous.fromSleep && step.from == DOZING && step.to == LOCKSCREEN ->
                             LockscreenWakeReveal(
-                                fromLockscreen = true,
+                                fromSleep = true,
                                 step = step,
                                 startProgress =
                                     if (previous.step.from == DOZING &&
@@ -281,7 +281,7 @@ constructor(
             ) { reveal, wakefulness, screenPowerState, aodAvailable ->
                 val step = reveal.step
                 when {
-                    aodAvailable || !reveal.fromLockscreen -> 1f
+                    aodAvailable || !reveal.fromSleep -> 1f
                     step.to == DOZING ->
                         if (screenPowerState == ScreenPowerState.SCREEN_OFF ||
                             wakefulness.isAwake()

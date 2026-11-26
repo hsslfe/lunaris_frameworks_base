@@ -444,6 +444,77 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
 
     @Test
     @DisableSceneContainer
+    fun alpha_homeScreenSleep_usesSameWakeReveal() =
+        testScope.runTest {
+            val powerRepository = kosmos.fakePowerRepository
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+            keyguardRepository.setAodAvailable(false)
+            val alpha by collectLastValue(underTest.alpha(viewState))
+            runCurrent()
+
+            keyguardTransitionRepository.sendTransitionSteps(
+                KeyguardState.LOCKSCREEN,
+                KeyguardState.GONE,
+                testScope,
+            )
+            assertThat(alpha).isEqualTo(0f)
+
+            powerRepository.updateWakefulness(
+                WakefulnessState.ASLEEP,
+                WakeSleepReason.POWER_BUTTON,
+                WakeSleepReason.POWER_BUTTON,
+                false,
+            )
+            keyguardTransitionRepository.sendTransitionSteps(
+                KeyguardState.GONE,
+                KeyguardState.DOZING,
+                testScope,
+            )
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
+            runCurrent()
+            assertThat(alpha).isEqualTo(0f)
+
+            powerRepository.updateWakefulness(
+                WakefulnessState.STARTING_TO_WAKE,
+                WakeSleepReason.POWER_BUTTON,
+                WakeSleepReason.POWER_BUTTON,
+                false,
+            )
+            powerRepository.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+            runCurrent()
+            assertThat(alpha).isEqualTo(0f)
+
+            keyguardTransitionRepository.sendTransitionStepsThroughRunning(
+                KeyguardState.DOZING,
+                KeyguardState.LOCKSCREEN,
+                testScope,
+                throughValue = 0.25f,
+            )
+            assertThat(alpha!!).isGreaterThan(0f)
+            assertThat(alpha!!).isAtMost(0.25f)
+
+            keyguardTransitionRepository.sendTransitionSteps(
+                listOf(
+                    TransitionStep(
+                        KeyguardState.DOZING,
+                        KeyguardState.LOCKSCREEN,
+                        1f,
+                        TransitionState.RUNNING,
+                    ),
+                    TransitionStep(
+                        KeyguardState.DOZING,
+                        KeyguardState.LOCKSCREEN,
+                        1f,
+                        TransitionState.FINISHED,
+                    ),
+                ),
+                testScope,
+            )
+            assertThat(alpha).isEqualTo(1f)
+        }
+
+    @Test
+    @DisableSceneContainer
     fun alpha_idleOnHub_isZero() =
         testScope.runTest {
             val alpha by collectLastValue(underTest.alpha(viewState))
