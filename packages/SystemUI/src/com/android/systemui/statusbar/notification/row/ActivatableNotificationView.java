@@ -484,7 +484,8 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
     }
 
     protected boolean usesCosTileBackground() {
-        return mIsBlurSupported && mCosTileBackgroundEnabled && !mOnKeyguard && !mIsDozing
+        // The border is a tile style, not a blur capability.
+        return mCosTileBackgroundEnabled && !mOnKeyguard && !mIsDozing
                 && (mShadeExpanded || (!isHeadsUpState() && !isPinned()));
     }
 
@@ -883,8 +884,8 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
         if (withTint && mBgTint != NO_COLOR) {
             return mBgTint;
         } else {
-            return usesCosTileBackground() || usesTransparentBackground()
-                    ? mNormalColor : mOpaqueColor;
+            // Match QS: use surfaceEffect2 for COS with blur, surfaceBright without blur.
+            return usesTransparentBackground() ? mNormalColor : mOpaqueColor;
         }
     }
 
