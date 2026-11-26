@@ -38,6 +38,7 @@ import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.util.DisplayMetrics;
@@ -89,6 +90,8 @@ public class WallpaperDepthUtils {
     private final BroadcastDispatcher mBroadcastDispatcher;
     private final UserTracker mUserTracker;
     private final SpatialEffectController mSpatialEffectController;
+    private final PowerManager mPowerManager;
+    private boolean mSpatialNeedsInitialPose = true;
     private boolean mTunableRegistered;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
     private IWallpaperZoomListener mWallpaperZoomListener;
@@ -137,6 +140,7 @@ public class WallpaperDepthUtils {
         mBroadcastDispatcher = Dependency.get(BroadcastDispatcher.class);
         mUserTracker = Dependency.get(UserTracker.class);
         mSpatialEffectController = new SpatialEffectController(mContext);
+        mPowerManager = mContext.getSystemService(PowerManager.class);
 
         mLockScreenBackground = new FrameLayout(mContext) {
             @Override
@@ -217,8 +221,10 @@ public class WallpaperDepthUtils {
     private void registerTunable() {
         if (mTunableRegistered) return;
         mTunableRegistered = true;
-        mBroadcastDispatcher.registerReceiver(mWallpaperChangedReceiver,
-                new IntentFilter(Intent.ACTION_WALLPAPER_CHANGED),
+        IntentFilter filter = new IntentFilter(Intent.ACTION_WALLPAPER_CHANGED);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        mBroadcastDispatcher.registerReceiver(mWallpaperChangedReceiver, filter,
                 new HandlerExecutor(mMainHandler), UserHandle.ALL);
         clearDepthWallpaperIfChanged();
         mTunerService.addTunable(mTunable, WALLPAPER_DEPTH_KEY,
@@ -238,8 +244,16 @@ public class WallpaperDepthUtils {
     private final BroadcastReceiver mWallpaperChangedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (mTunableRegistered && Intent.ACTION_WALLPAPER_CHANGED.equals(intent.getAction())) {
+            if (!mTunableRegistered) return;
+            if (Intent.ACTION_WALLPAPER_CHANGED.equals(intent.getAction())) {
                 clearDepthWallpaperIfChanged();
+            } else if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                mSpatialNeedsInitialPose = true;
+                mSpatialEffectController.setActive(false, false);
+            } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                // The scrim callback can precede PowerManager's interactive state.
+                // Retry once at the actual screen-on event, even without a zoom frame.
+                updateSpatialEffectActive();
             }
         }
     };
@@ -708,17 +722,21 @@ public class WallpaperDepthUtils {
             return;
         }
 
-        boolean active = mSpatialEffectEnabled && canShowDepthWallpaper()
-                && mLockScreenSubject.isAttachedToWindow();
-        // Establish the overscan before the first visible wallpaper frame rather
-        // than adding a separate 320ms scale-in after wake. Keep the normal
-        // scale animation when the wallpaper is already visible.
-        boolean animate = mLockScreenBackground.isShown()
-                && !mDozing && !mBouncerShowing && !mGlanceableHubShowing
-                && !mDynamicBarExpanded && mScrimController.getState() == ScrimState.KEYGUARD
-                && mContext.getResources().getConfiguration().orientation
-                        != Configuration.ORIENTATION_LANDSCAPE;
+        boolean visible = canShowDepthWallpaper() && mLockScreenSubject.isAttachedToWindow();
+        boolean interactive = mPowerManager == null || mPowerManager.isInteractive();
+        if (!visible || !interactive || !mLockScreenBackground.isShown()) {
+            mSpatialNeedsInitialPose = true;
+        }
+        boolean active = mSpatialEffectEnabled && visible && interactive;
+        // isShown() can still be true across a screen-off/on transition. Remember
+        // the inactive scene explicitly so wake never starts a separate scale ramp.
+        boolean animate = !mSpatialNeedsInitialPose && mLockScreenBackground.isShown()
+                && !mDynamicBarExpanded;
         mSpatialEffectController.setActive(active, animate);
+        if (visible && interactive && mLockScreenBackground.isShown()
+                && (!mSpatialEffectEnabled || mSpatialEffectController.isActive())) {
+            mSpatialNeedsInitialPose = false;
+        }
     }
 
     private Rect getDepthWallpaperBounds() {
