@@ -22,6 +22,7 @@ import static android.service.dreams.Flags.dismissDreamOnKeyguardDismiss;
 import static android.view.RemoteAnimationTarget.MODE_OPENING;
 import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_APPEARING;
 import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_GOING_AWAY;
+import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_OCCLUDING;
 import static android.view.WindowManager.TRANSIT_KEYGUARD_GOING_AWAY;
 import static android.view.WindowManager.TRANSIT_KEYGUARD_OCCLUDE;
 import static android.view.WindowManager.TRANSIT_KEYGUARD_UNOCCLUDE;
@@ -224,6 +225,15 @@ public class KeyguardService extends Service {
                     SurfaceControl.Transaction t, IRemoteTransitionFinishedCallback finishCallback)
                     throws RemoteException {
                 Slog.d(TAG, "Starts IRemoteAnimationRunner: info=" + info);
+
+                // The legacy adapter otherwise initializes opening leashes at alpha zero,
+                // before the keyguard launch animator even receives them.
+                if ((info.getFlags() & TRANSIT_FLAG_KEYGUARD_GOING_AWAY) == 0
+                        && ((info.getFlags() & TRANSIT_FLAG_KEYGUARD_OCCLUDING) != 0
+                            || info.getType() == TRANSIT_KEYGUARD_OCCLUDE)
+                        && keyguardViewMediator.finishLockStylesOcclusion(info, t, finishCallback)) {
+                    return;
+                }
 
                 final RemoteAnimationTarget[] apps;
                 final RemoteAnimationTarget[] wallpapers;
