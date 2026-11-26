@@ -475,6 +475,9 @@ public class KeyguardService extends Service {
             if (!KeyguardWmStateRefactor.isEnabled()) {
                 mKeyguardViewMediator.setOccluded(isOccluded, animate);
             } else {
+                if (!isOccluded) {
+                    mKeyguardViewMediator.endLockStylesOcclusion();
+                }
                 mWmOcclusionManager.onKeyguardServiceSetOccluded(isOccluded);
             }
             Trace.endSection();

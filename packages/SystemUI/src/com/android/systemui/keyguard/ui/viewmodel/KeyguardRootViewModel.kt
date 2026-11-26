@@ -230,6 +230,7 @@ constructor(
             if (minModeManager.isPresent) minModeManager.get().isMinModeInForegroundFlow
             else flowOf(false),
             notificationShadeWindowModel.isKeyguardOccluded,
+            keyguardInteractor.lockStylesOccluding,
             communalInteractor.isIdleOnCommunal,
             keyguardTransitionInteractor
                 .transitionValue(OFF)

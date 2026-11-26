@@ -101,6 +101,7 @@ import android.view.SurfaceControl.Transaction;
 import android.view.SyncRtSurfaceTransactionApplier;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.WindowManagerPolicyConstants;
 import android.view.animation.Animation;
@@ -2424,6 +2425,9 @@ public class KeyguardViewMediator implements CoreStartable,
     private void handleSetOccluded(boolean isOccluded, boolean animate) {
         Trace.beginSection("KeyguardViewMediator#handleSetOccluded");
         Log.d(TAG, "handleSetOccluded(" + isOccluded + ")");
+        if (!isOccluded) {
+            mKeyguardInteractor.endLockStylesOcclusion();
+        }
         EventLogTags.writeSysuiKeyguard(isOccluded ? 1 : 0, animate ? 1 : 0);
 
         mInteractionJankMonitor.cancel(CUJ_LOCKSCREEN_TRANSITION_FROM_AOD);
@@ -4521,8 +4525,8 @@ public class KeyguardViewMediator implements CoreStartable,
         }
         if (galleryTask == null) return false;
 
-        // Show the actual app surface before updating keyguard visibility. The shell
-        // finish transaction still performs normal reparenting and cleanup.
+        // Suppress the real lockscreen before revealing the gallery's own preview.
+        final ActivityManager.RunningTaskInfo taskToOcclude = galleryTask;
         for (TransitionInfo.Change change : info.getChanges()) {
             if (change.getMode() == WindowManager.TRANSIT_OPEN
                     || change.getMode() == WindowManager.TRANSIT_TO_FRONT) {
@@ -4533,15 +4537,35 @@ public class KeyguardViewMediator implements CoreStartable,
                 }
             }
         }
-        t.apply();
-        if (KeyguardWmStateRefactor.isEnabled()) {
-            mWmOcclusionManager.getKeyguardOcclusionInteractor()
-                    .setWmNotifiedShowWhenLockedActivityOnTop(true, galleryTask);
-        } else {
-            setOccluded(true, false);
-        }
-        finishCallback.onTransitionFinished(null, null);
+        mHandler.post(() -> {
+            mKeyguardInteractor.beginLockStylesOcclusion();
+            final ViewRootImpl viewRoot = mKeyguardViewControllerLazy.get().getViewRootImpl();
+            if (viewRoot != null && viewRoot.getView() != null) {
+                final View keyguardRoot = viewRoot.getView().findViewById(R.id.keyguard_root_view);
+                if (keyguardRoot != null) {
+                    // The alpha flow maintains this until normal occlusion takes over.
+                    keyguardRoot.setAlpha(0f);
+                }
+            }
+            if (KeyguardWmStateRefactor.isEnabled()) {
+                mWmOcclusionManager.getKeyguardOcclusionInteractor()
+                        .setWmNotifiedShowWhenLockedActivityOnTop(true, taskToOcclude);
+            } else {
+                setOccluded(true, false);
+            }
+            t.apply();
+            try {
+                finishCallback.onTransitionFinished(null, null);
+            } catch (RemoteException e) {
+                Log.w(TAG, "Failed to finish LockStyles occlusion", e);
+            }
+        });
         return true;
+    }
+
+    /** Release the gallery handoff on explicit WM unocclusion, including aborted launches. */
+    void endLockStylesOcclusion() {
+        mHandler.post(mKeyguardInteractor::endLockStylesOcclusion);
     }
 
     private IRemoteTransition validatingRemoteTransition(IRemoteTransition delegate) {
