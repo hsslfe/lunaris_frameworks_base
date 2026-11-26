@@ -79,6 +79,8 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
         motion.setActive(active && hasLayer(background) && hasLayer(subject), animate);
     }
 
+    public boolean isActive() { return motion.isActive(); }
+
     public void onLayersChanged() { motion.dispatchPose(); applyScale(); }
     public void onDisplayRotationChanged(int rotation) { motion.onDisplayRotationChanged(rotation); }
     @Override public void onTiltChanged(float x, float y) { motion.onTiltChanged(x, y); }

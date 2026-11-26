@@ -98,7 +98,17 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
         requested = enabled;
         enabled &= sensitivity > 0f && interactive();
         if (active == enabled) {
-            if (!enabled && !animate) reset();
+            if (!animate) {
+                if (!enabled) {
+                    reset();
+                } else if (scale != OVERSCAN) {
+                    // A non-animated wake request may follow an animated activation.
+                    // Finish only the scale ramp; keep the current sensor pose.
+                    cancelAnimation();
+                    scale = OVERSCAN;
+                    dispatchPose();
+                }
+            }
             return;
         }
         cancelAnimation();
