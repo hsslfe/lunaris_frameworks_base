@@ -42,6 +42,7 @@ import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.KeyguardState.OCCLUDED
 import com.android.systemui.keyguard.shared.model.StatusBarState
+import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.res.R
@@ -56,6 +57,8 @@ import com.android.systemui.wallpapers.domain.interactor.WallpaperFocalAreaInter
 import javax.inject.Inject
 import javax.inject.Provider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -71,6 +74,7 @@ import kotlinx.coroutines.flow.combineTransform
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -79,6 +83,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.launch
 
 /**
  * Encapsulates business-logic related to the keyguard but not to a more specific part within it.
@@ -100,7 +105,7 @@ constructor(
     private val fromAlternateBouncerTransitionInteractor:
         Provider<FromAlternateBouncerTransitionInteractor>,
     private val lockPatternUtils: LockPatternUtils,
-    @Application applicationScope: CoroutineScope,
+    @Application private val applicationScope: CoroutineScope,
 ) {
     // TODO(b/296118689): move to a repository
     private val _notificationPlaceholderBounds = MutableStateFlow(NotificationContainerBounds())
@@ -143,6 +148,35 @@ constructor(
     fun setNotificationContainerBounds(position: NotificationContainerBounds) {
         SceneContainerFlag.assertInLegacyMode()
         _notificationPlaceholderBounds.value = position
+    }
+
+    // LockStyles draws its own copy of keyguard during the gallery entry.
+    private val _lockStylesOccluding = MutableStateFlow(false)
+    val lockStylesOccluding: StateFlow<Boolean> = _lockStylesOccluding.asStateFlow()
+    private var lockStylesOcclusionJob: Job? = null
+
+    // Called on the main thread for the validated opaque gallery task.
+    fun beginLockStylesOcclusion() {
+        lockStylesOcclusionJob?.cancel()
+        val initialStep = keyguardTransitionInteractor.transitionState.value
+        _lockStylesOccluding.value = true
+        lockStylesOcclusionJob = applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            keyguardTransitionInteractor.transitionState.first { step ->
+                step != initialStep &&
+                    ((step.to == OCCLUDED && step.transitionState == TransitionState.CANCELED) ||
+                        (step.to != OCCLUDED &&
+                            (step.from == OCCLUDED ||
+                                step.transitionState == TransitionState.STARTED ||
+                                step.to != initialStep.to)))
+            }
+            _lockStylesOccluding.value = false
+        }
+    }
+
+    fun endLockStylesOcclusion() {
+        lockStylesOcclusionJob?.cancel()
+        lockStylesOcclusionJob = null
+        _lockStylesOccluding.value = false
     }
 
     /** Whether the system is in doze mode. */
