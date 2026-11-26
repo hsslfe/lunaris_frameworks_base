@@ -81,6 +81,8 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
 
     public boolean isActive() { return motion.isActive(); }
 
+    public void setZoomPaused(boolean paused) { motion.setPaused(paused); }
+
     public void onLayersChanged() { motion.dispatchPose(); applyScale(); }
     public void onDisplayRotationChanged(int rotation) { motion.onDisplayRotationChanged(rotation); }
     @Override public void onTiltChanged(float x, float y) { motion.onTiltChanged(x, y); }

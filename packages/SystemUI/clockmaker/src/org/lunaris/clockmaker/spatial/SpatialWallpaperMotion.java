@@ -26,6 +26,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     private boolean requested;
     private boolean active;
     private boolean sensing;
+    private boolean paused;
     private boolean scheduled;
     private float sensitivity = 1f;
     private float x;
@@ -42,7 +43,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
 
     private final Choreographer.FrameCallback frame = time -> {
         scheduled = false;
-        if (!active) return;
+        if (!active || paused) return;
         if (!interactive()) {
             setActive(false, false);
             return;
@@ -101,7 +102,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
             if (!animate) {
                 if (!enabled) {
                     reset();
-                } else if (scale != OVERSCAN) {
+                } else if (!paused && scale != OVERSCAN) {
                     // A non-animated wake request may follow an animated activation.
                     // Finish only the scale ramp; keep the current sensor pose.
                     cancelAnimation();
@@ -117,22 +118,60 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
         active = enabled;
         if (enabled) {
             latestX = latestY = targetX = targetY = x = y = 0f;
-            sensing = sensor.addListener(this);
-            if (!sensing) {
-                active = false;
-                reset();
-                return;
+            if (!paused) {
+                sensing = sensor.addListener(this);
+                if (!sensing) {
+                    active = false;
+                    reset();
+                    return;
+                }
             }
-            if (animate) animateTo(OVERSCAN, 320, false);
-            else scale = OVERSCAN;
+            if (animate) {
+                if (!paused) animateTo(OVERSCAN, 320, false);
+            } else {
+                scale = OVERSCAN;
+            }
             dispatchPose();
         } else {
             if (sensing) sensor.removeListener(this);
             sensing = false;
             targetX = targetY = 0f;
-            if (animate && interactive()) animateTo(1f, 120, true);
+            if (animate && !paused && interactive()) animateTo(1f, 120, true);
             else reset();
         }
+    }
+
+    /** Hold the current pose while another wallpaper transform is animating. */
+    public void setPaused(boolean pause) {
+        if (paused == pause) return;
+        paused = pause;
+        if (paused) {
+            cancelAnimation();
+            cancelFrame();
+            velocityX = velocityY = 0f;
+            if (sensing) sensor.removeListener(this);
+            sensing = false;
+            return;
+        }
+        if (!active) {
+            if (scale != 1f) {
+                if (interactive()) animateTo(1f, 120, true);
+                else reset();
+            }
+            return;
+        }
+        if (!interactive()) {
+            setActive(false, false);
+            return;
+        }
+        sensing = sensor.addListener(this);
+        if (!sensing) {
+            active = false;
+            reset();
+            return;
+        }
+        if (scale != OVERSCAN) animateTo(OVERSCAN, 320, false);
+        if (!isSettled()) schedule();
     }
 
     private void animateTo(float endScale, long duration, boolean resetPose) {
@@ -164,7 +203,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     }
 
     @Override public void onTiltChanged(float horizontal, float vertical) {
-        if (!active || !Float.isFinite(horizontal) || !Float.isFinite(vertical)) return;
+        if (!active || paused || !Float.isFinite(horizontal) || !Float.isFinite(vertical)) return;
         latestX = Math.max(-1f, Math.min(1f, horizontal));
         latestY = Math.max(-1f, Math.min(1f, vertical));
         targetX = latestX * sensitivity;
@@ -180,7 +219,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     public void onDisplayRotationChanged(int rotation) { sensor.onDisplayRotationChanged(rotation); }
 
     public void destroy() {
-        requested = active = false;
+        requested = active = paused = false;
         if (sensing) sensor.removeListener(this);
         sensing = false;
         reset();
@@ -212,7 +251,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     }
 
     private void schedule() {
-        if (!active || scheduled) return;
+        if (!active || paused || scheduled) return;
         scheduled = true;
         Choreographer.getInstance().postFrameCallback(frame);
     }

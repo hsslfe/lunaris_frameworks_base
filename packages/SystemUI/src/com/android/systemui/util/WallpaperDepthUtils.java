@@ -79,6 +79,7 @@ public class WallpaperDepthUtils {
     private static final int DEFAULT_FADE_CURVE_PERCENT = 50;
     private static final int DEFAULT_BOTTOM_FADE_DP = 100;
     private static final int DEFAULT_BOTTOM_INSET_DP = 180;
+    private static final long WALLPAPER_ZOOM_SETTLE_MS = 80;
 
     private static WallpaperDepthUtils instance;
     private FrameLayout mLockScreenBackground;
@@ -97,6 +98,8 @@ public class WallpaperDepthUtils {
     private IWallpaperZoomListener mWallpaperZoomListener;
     private int mWallpaperZoomDisplayId;
     private boolean mHasWallpaperZoom;
+    private boolean mWallpaperZoomPaused;
+    private final Runnable mResumeWallpaperSpatialMotion = this::resumeWallpaperSpatialMotion;
     private float mWallpaperZoomScale = 1f;
     private float mWallpaperZoomPivotX;
     private float mWallpaperZoomPivotY;
@@ -249,11 +252,13 @@ public class WallpaperDepthUtils {
                 clearDepthWallpaperIfChanged();
             } else if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                 mSpatialNeedsInitialPose = true;
+                if (mWallpaperZoomListener != null) {
+                    pauseWallpaperSpatialMotion();
+                }
                 mSpatialEffectController.setActive(false, false);
             } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
-                // The scrim callback can precede PowerManager's interactive state.
-                // Retry once at the actual screen-on event, even without a zoom frame.
                 updateSpatialEffectActive();
+                scheduleWallpaperSpatialResume();
             }
         }
     };
@@ -326,6 +331,7 @@ public class WallpaperDepthUtils {
             return;
         }
         mDozing = dozing;
+        updateWallpaperSpatialPauseForDoze();
         updateDepthWallpaperVisibility();
         updateSpatialEffectActive();
     }
@@ -521,6 +527,10 @@ public class WallpaperDepthUtils {
                 mMainHandler.post(() -> {
                     if (mWallpaperZoomListener != this) return;
                     boolean firstUpdate = !mHasWallpaperZoom;
+                    if (!firstUpdate && Float.compare(mWallpaperZoomScale, scale) != 0) {
+                        pauseWallpaperSpatialMotion();
+                        scheduleWallpaperSpatialResume();
+                    }
                     mWallpaperZoomScale = scale;
                     mWallpaperZoomPivotX = pivotX;
                     mWallpaperZoomPivotY = pivotY;
@@ -532,13 +542,68 @@ public class WallpaperDepthUtils {
                 });
             }
         };
+        updateWallpaperSpatialPauseForDoze();
+        if (mPowerManager != null && !mPowerManager.isInteractive()) {
+            pauseWallpaperSpatialMotion();
+        }
         try {
             WindowManagerGlobal.getWindowManagerService().registerWallpaperZoomListener(
                     mWallpaperZoomListener, mWallpaperZoomDisplayId);
         } catch (RemoteException | IllegalArgumentException e) {
             Log.w("WallpaperDepthUtils", "Unable to listen for wallpaper zoom", e);
             mWallpaperZoomListener = null;
+            clearWallpaperSpatialPause();
         }
+    }
+
+    private void pauseWallpaperSpatialMotion() {
+        mMainHandler.removeCallbacks(mResumeWallpaperSpatialMotion);
+        if (!mWallpaperZoomPaused) {
+            mWallpaperZoomPaused = true;
+            mSpatialEffectController.setZoomPaused(true);
+        }
+    }
+
+    private void scheduleWallpaperSpatialResume() {
+        if (!mWallpaperZoomPaused || mWallpaperZoomListener == null || mDozing
+                || (mPowerManager != null && !mPowerManager.isInteractive())) {
+            return;
+        }
+        // The listener reports changed scale values, not an animation-end event.
+        // Restart a single settle callback on each change.
+        mMainHandler.removeCallbacks(mResumeWallpaperSpatialMotion);
+        mMainHandler.postDelayed(mResumeWallpaperSpatialMotion, WALLPAPER_ZOOM_SETTLE_MS);
+    }
+
+    private void resumeWallpaperSpatialMotion() {
+        if (!mWallpaperZoomPaused || mWallpaperZoomListener == null || mDozing
+                || (mPowerManager != null && !mPowerManager.isInteractive())) {
+            return;
+        }
+        mWallpaperZoomPaused = false;
+        updateSpatialEffectActive();
+        mSpatialEffectController.setZoomPaused(false);
+    }
+
+    private void updateWallpaperSpatialPauseForDoze() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mMainHandler.post(this::updateWallpaperSpatialPauseForDoze);
+            return;
+        }
+        if (mWallpaperZoomListener == null) return;
+        if (mDozing) {
+            pauseWallpaperSpatialMotion();
+        } else {
+            scheduleWallpaperSpatialResume();
+        }
+    }
+
+    private void clearWallpaperSpatialPause() {
+        mMainHandler.removeCallbacks(mResumeWallpaperSpatialMotion);
+        mWallpaperZoomPaused = false;
+        mSpatialEffectController.setActive(false, false);
+        mSpatialEffectController.setZoomPaused(false);
+        mSpatialNeedsInitialPose = true;
     }
 
     private void unregisterWallpaperZoomListener() {
@@ -546,6 +611,7 @@ public class WallpaperDepthUtils {
         IWallpaperZoomListener listener = mWallpaperZoomListener;
         mWallpaperZoomListener = null;
         mHasWallpaperZoom = false;
+        clearWallpaperSpatialPause();
         try {
             WindowManagerGlobal.getWindowManagerService().unregisterWallpaperZoomListener(
                     listener, mWallpaperZoomDisplayId);
