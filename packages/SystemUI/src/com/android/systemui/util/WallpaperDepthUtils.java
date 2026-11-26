@@ -514,6 +514,13 @@ public class WallpaperDepthUtils {
                     applyWallpaperZoom();
                     if (firstUpdate) {
                         updateDepthWallpaperVisibility();
+                    } else if (mSpatialEffectEnabled
+                            && !mSpatialEffectController.isActive()
+                            && canShowDepthWallpaper()) {
+                        // A wake can reach KEYGUARD before PowerManager is interactive.
+                        // Retry at the next actual zoom frame instead of waiting for a
+                        // delayed wallpaper refresh. Active sensors need no extra work.
+                        updateSpatialEffectActive();
                     }
                 });
             }
@@ -620,6 +627,9 @@ public class WallpaperDepthUtils {
                 mLockScreenSubject.setRenderEffect(blurEffect);
                 mAppliedAmbientBlurRadius = blurRadius;
             }
+            // Recheck the power and scrim state on the main thread, before revealing
+            // either layer. The wake callback may have arrived before interactive state.
+            updateSpatialEffectActive();
             mLockScreenSubject.setVisibility(
                     !mDynamicBarExpanded && (showDepth || showAmbient) ? View.VISIBLE : View.GONE);
             mLockScreenBackground.setVisibility(
@@ -693,9 +703,18 @@ public class WallpaperDepthUtils {
         if (mSpatialEffectController == null) {
             return;
         }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mMainHandler.post(this::updateSpatialEffectActive);
+            return;
+        }
 
-        boolean active = mSpatialEffectEnabled && canShowDepthWallpaper();
-        boolean animate = !mDozing && !mBouncerShowing && !mGlanceableHubShowing
+        boolean active = mSpatialEffectEnabled && canShowDepthWallpaper()
+                && mLockScreenSubject.isAttachedToWindow();
+        // Establish the overscan before the first visible wallpaper frame rather
+        // than adding a separate 320ms scale-in after wake. Keep the normal
+        // scale animation when the wallpaper is already visible.
+        boolean animate = mLockScreenBackground.isShown()
+                && !mDozing && !mBouncerShowing && !mGlanceableHubShowing
                 && !mDynamicBarExpanded && mScrimController.getState() == ScrimState.KEYGUARD
                 && mContext.getResources().getConfiguration().orientation
                         != Configuration.ORIENTATION_LANDSCAPE;

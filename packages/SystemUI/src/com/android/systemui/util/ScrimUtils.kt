@@ -278,6 +278,9 @@ class ScrimUtils private constructor(context: Context?) {
         mAwake = true
         listeners.notify { it.onStartedWakingUp() }
         if (mStateIsKeyguard) {
+            // Start the depth wallpaper handoff alongside the wake zoom. The
+            // existing delayed refresh remains only a fallback for layer loading.
+            mWallpaperDepthUtils?.updateDepthWallpaperVisibility()
             mainHandler.postDelayed({
                 mWallpaperDepthUtils?.updateDepthWallpaper()
                 mWallpaperDepthUtils?.updateDepthWallpaperVisibility()
