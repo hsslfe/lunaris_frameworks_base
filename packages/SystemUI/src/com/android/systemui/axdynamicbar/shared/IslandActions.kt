@@ -1,5 +1,8 @@
 package com.android.systemui.axdynamicbar.shared
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import com.android.systemui.axdynamicbar.model.ChargerReadings
 import android.net.Uri
 import com.android.systemui.islandevents.model.IslandEvent
 
@@ -26,7 +29,11 @@ val EVENT_TYPE_IDS: Map<Class<out IslandEvent>, String> =
         IslandEvent.AospChip::class.java to "aosp_chip",
     )
 
+private val emptyChargerReadings = MutableStateFlow<ChargerReadings?>(null)
+
 interface IslandActions {
+    val chargerReadings: StateFlow<ChargerReadings?>
+        get() = emptyChargerReadings
     val onFocusableRequested: ((Boolean) -> Unit)?
         get() = null
     fun collapseIsland()

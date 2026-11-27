@@ -260,7 +260,9 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
                             LaunchedEffect(event.id) { onCollapse() }
                         }
                     }
-                    else -> KeyguardGenericPanel(event, interactor, hapticsViewModelFactory)
+                    else -> KeyguardGenericPanel(event, interactor, hapticsViewModelFactory) {
+                        if (event is IslandEvent.Charging) onCollapse() else interactor.dismissEvent(event)
+                    }
                 }
             }
         }
@@ -1210,6 +1212,7 @@ private fun KeyguardGenericPanel(
     event: IslandEvent,
     interactor: IslandActions,
     hapticsViewModelFactory: SliderHapticsViewModel.Factory,
+    onDismiss: () -> Unit,
 ) {
     val colors = rememberIslandColors(event)
         KeyguardPanelSurface { Column(
@@ -1225,7 +1228,7 @@ private fun KeyguardGenericPanel(
                 contentColor = colors.onAccent,
                 backgroundColor = colors.accent,
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { interactor.dismissEvent(event) },
+                onClick = onDismiss,
             )
         }
     }

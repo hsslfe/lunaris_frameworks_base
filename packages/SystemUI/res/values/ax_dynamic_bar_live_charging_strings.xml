@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ax_dynamic_bar_live_charging_current">Current</string>
+    <string name="ax_dynamic_bar_live_charging_power">Power</string>
+    <string name="ax_dynamic_bar_live_charging_voltage">Voltage</string>
+    <string name="ax_dynamic_bar_live_charging_temperature">Temperature</string>
+</resources>

@@ -174,11 +174,14 @@ constructor(
                         }
                     }
                     scope.launch {
-                        combine(viewModel.isKeyguardExpanded, viewModel.chipState) {
-                                expanded,
-                                chipState ->
-                                expanded && chipState?.event is IslandEvent.Media
-                            }
+                        combine(
+                            viewModel.isKeyguardExpanded,
+                            viewModel.keyguardExpansion.panelEvent,
+                            viewModel.chipState,
+                            viewModel.nowBarAppearance,
+                        ) { expanded, event, chipState, nowBar ->
+                            expanded && (if (nowBar.enabled) chipState?.event else event) is IslandEvent.Media
+                        }
                             .distinctUntilChanged()
                             .collect { expandedMusicOpen ->
                                 // A track change may briefly clear chipState.

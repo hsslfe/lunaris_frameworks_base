@@ -18,8 +18,6 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.statusbar.KeyguardIndicationController
 import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor
-import com.android.systemui.statusbar.pipeline.battery.domain.interactor.BatteryInteractor
-import com.android.systemui.statusbar.policy.BatteryController
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
@@ -65,9 +63,7 @@ constructor(
     @Application private val applicationScope: CoroutineScope,
     @Application private val applicationContext: Context,
     val interactor: AxDynamicBarInteractor,
-    batteryInteractor: BatteryInteractor,
     private val powerInteractor: PowerInteractor,
-    private val batteryController: BatteryController,
     authController: AuthController,
     udfpsOverlayInteractor: UdfpsOverlayInteractor,
     keyguardIndicationController: KeyguardIndicationController,
@@ -129,25 +125,7 @@ constructor(
     val mediaSeekBarStyle: StateFlow<MediaSeekBarStyle> = interactor.mediaSeekBarStyle
     val chipStyle: StateFlow<Int> = interactor.settings.chipStyle
 
-    val keyguardBatteryInfo: StateFlow<KeyguardBatteryInfo> =
-        combine(
-            batteryInteractor.level,
-            batteryInteractor.isCharging,
-            batteryInteractor.powerSave,
-            batteryInteractor.batteryTimeRemainingEstimate,
-        ) { level, charging, powerSave, timeRemaining ->
-            KeyguardBatteryInfo(
-                level = level ?: 0,
-                isCharging = charging,
-                isPowerSave = powerSave,
-                isWireless = batteryController.isPluggedInWireless,
-                timeRemaining = timeRemaining,
-            )
-        }.stateIn(
-            applicationScope,
-            SharingStarted.Lazily,
-            KeyguardBatteryInfo(0, false, false, false, null),
-        )
+    val keyguardBatteryInfo = keyguardExpansion.batteryInfo
 
     init {
         applicationScope.launch {
