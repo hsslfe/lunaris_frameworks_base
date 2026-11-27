@@ -19,16 +19,14 @@ package com.android.systemui.statusbar.featurepods.popups.ui.compose
 import android.content.Context
 import android.view.ViewTreeObserver
 import android.view.WindowManager
-import androidx.compose.animation.AnimatedContent
+import com.android.systemui.axdynamicbar.ui.compose.SwipePageTransition
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,8 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.dimensionResource
@@ -74,6 +72,11 @@ import com.android.systemui.statusbar.featurepods.popups.ui.model.SystemEventKin
 import com.android.systemui.statusbar.featurepods.popups.ui.model.isNotificationPopup
 import kotlinx.coroutines.launch
 
+// Rest-to-rest curves keep both the fade and its associated slide free of abrupt
+// starts or stops. The shared pager's compact callers keep their existing curves.
+private val ExpandedPageExitEasing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
+private val ExpandedPageEnterEasing = CubicBezierEasing(0.2f, 0f, 0.2f, 1f)
+
 /** Displays an island card that grows from, and returns to, the tapped capsule. */
 @Composable
 fun StatusBarPopup(
@@ -86,27 +89,48 @@ fun StatusBarPopup(
     onHidden: () -> Unit = {},
     chipIsCompanion: Boolean = false,
 ) {
-    LunarisBarContentTheme(viewModel.popupContent, viewModel.chipId) {
-        LunarisBarPopupWindow(
-            viewModel,
-            isVisible,
-            chipBoundsInScreen,
-            canPage,
-            pageDirection,
-            onPage,
-            onHidden,
-            chipIsCompanion,
-        )
+    val settings = LocalLunarisBarState.current.settings
+    val incomingMusic = viewModel.popupContent is PopupContentModel.Media
+    // Keep music's extra pre-sizing window, but bring ordinary paging closer
+    // to the same relaxed rhythm without premeasuring any other card.
+    val baseDuration = if (incomingMusic) 420 else 360
+    val duration = if (settings.isReducedMotion || !isVisible || viewModel.popupContent.isNotificationPopup) 0
+        else (baseDuration / settings.animationSpeed).toInt().coerceIn(1, 480)
+    val fadeOutMillis = duration * 2 / 5
+    val fadeInMillis = duration - fadeOutMillis
+    SwipePageTransition(
+        target = viewModel,
+        pageKey = viewModel.chipId,
+        travel = { 14.dp },
+        direction = { _, _ -> if (pageDirection >= 0) 1 else -1 },
+        durationMillis = duration,
+        // Keep a short directional glide for music after its bounds are prepared.
+        // A smaller distance avoids pushing player controls against the outline.
+        enterTravel = { if (it.popupContent is PopupContentModel.Media) 8.dp else 14.dp },
+        fadeOutMillis = fadeOutMillis,
+        fadeInMillis = fadeInMillis,
+        exitEasing = ExpandedPageExitEasing,
+        enterEasing = ExpandedPageEnterEasing,
+        retargetFromCurrent = true,
+        preserveExitDuration = incomingMusic,
+    ) { page, motion ->
+        LunarisBarContentTheme(page.popupContent, page.chipId) {
+            LunarisBarPopupWindow(
+                viewModel, page, motion, fadeOutMillis, isVisible, chipBoundsInScreen, canPage, onPage, onHidden, chipIsCompanion,
+            )
+        }
     }
 }
 
 @Composable
 private fun LunarisBarPopupWindow(
     viewModel: PopupChipModel.Shown,
+    page: PopupChipModel.Shown,
+    pageMotion: Modifier,
+    fadeOutMillis: Int,
     isVisible: Boolean,
     chipBoundsInScreen: Rect?,
     canPage: Boolean,
-    pageDirection: Int,
     onPage: (Int) -> Unit,
     onHidden: () -> Unit,
     chipIsCompanion: Boolean,
@@ -122,6 +146,13 @@ private fun LunarisBarPopupWindow(
             dimensionResource(R.dimen.status_bar_height).roundToPx() + 8.dp.roundToPx()
         }
     val currentHidePopup by rememberUpdatedState(viewModel.hidePopup)
+    // Swipe squish is gesture-driven, not tied to page changes or metadata refreshes.
+    // Keeping the release animator in the popup host makes rapid reversals interruptible.
+    val swipeSettle = remember { Animatable(0f) }
+    val swipeSettings by rememberUpdatedState(settings)
+    var swipeCompression by remember { mutableFloatStateOf(0f) }
+    var swipeDragging by remember { mutableStateOf(false) }
+    var swipeSettleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     Popup(
         popupPositionProvider =
             remember {
@@ -202,15 +233,23 @@ private fun LunarisBarPopupWindow(
             compactOrigin = chipIsCompanion,
             onNotificationSwipeDismiss = dismissNotification,
             onNotificationTouchChanged = viewModel.onNotificationPopupTouchChanged,
+            pageScale = {
+                if (isVisible && !notification && !settings.isReducedMotion) {
+                    val amount = if (swipeDragging) swipeCompression else swipeSettle.value
+                    // The outline and content share this transform. Permit a small
+                    // elastic overshoot without clipping the first spring rebound.
+                    1f - 0.04f * amount.coerceIn(-0.25f, 1f)
+                } else 1f
+            },
             fastEnter =
                 (viewModel.popupContent as? PopupContentModel.SystemEvent)?.kind ==
                     SystemEventKind.Unlock,
             useRedesignedMediaBackground =
                 LocalLunarisBarState.current.alternativeMedia &&
-                    (viewModel.popupContent as? PopupContentModel.Media)?.useRedesignedMedia ==
+                    (page.popupContent as? PopupContentModel.Media)?.useRedesignedMedia ==
                         true,
             secondaryContent = {
-                val media = viewModel.popupContent as? PopupContentModel.Media
+                val media = page.popupContent as? PopupContentModel.Media
                 if (
                     media != null &&
                         (!media.model.lyrics.isNullOrBlank() ||
@@ -221,22 +260,66 @@ private fun LunarisBarPopupWindow(
             },
         ) {
             val pagerScope = rememberCoroutineScope()
-            val pageFollow = remember(viewModel.chipId) { Animatable(0f) }
-            var pageAccumulator by remember(viewModel.chipId) { mutableFloatStateOf(0f) }
-            var followJob by
-                remember(viewModel.chipId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+            var pageAccumulator by remember { mutableFloatStateOf(0f) }
             val dismissLabel = stringResource(R.string.lunaris_bar_swipe_dismiss)
             val pageThresholdPx = with(density) { 56.dp.toPx() }
-            val maxFollowPx = with(density) { 40.dp.toPx() }
             val currentOnPage by rememberUpdatedState(onPage)
+
+            fun settleSwipeSquish(committed: Boolean) {
+                if (!swipeDragging) return
+                val compression = swipeCompression
+                swipeSettleJob?.cancel()
+                swipeSettleJob =
+                    pagerScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        swipeSettle.snapTo(compression)
+                        swipeDragging = false
+                        val bounce = swipeSettings.bounce
+                        val elastic = committed && bounce != 0
+                        val speed = swipeSettings.animationSpeed
+                        val damping = when {
+                            !elastic -> Spring.DampingRatioNoBouncy
+                            bounce == 2 -> 0.46f
+                            else -> 0.55f
+                        }
+                        // A lower natural frequency makes the rebound relaxed rather
+                        // than a sharp kick. One continuous spring handles both the
+                        // release and settling, with no timed second scale animation.
+                        swipeSettle.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = damping,
+                                stiffness = (if (elastic) 120f else 180f) * speed * speed,
+                                visibilityThreshold = 0.008f,
+                            ),
+                        )
+                    }
+            }
 
             Box(modifier = Modifier.wrapContentSize()) {
                 Box(
                     modifier =
                         Modifier.then(
                                 if (!notification && canPage) {
-                                    Modifier.pointerInput(viewModel.chipId) {
+                                    Modifier.pointerInput(
+                                        notification,
+                                        canPage,
+                                        settings.isReducedMotion,
+                                    ) {
+                                        var initialCompression = 0f
                                         detectHorizontalDragGestures(
+                                            onDragStart = {
+                                                pageAccumulator = 0f
+                                                if (!notification && !settings.isReducedMotion) {
+                                                    // Sample the currently displayed scale before
+                                                    // interrupting a pending or running release.
+                                                    initialCompression =
+                                                        if (swipeDragging) swipeCompression
+                                                        else swipeSettle.value
+                                                    swipeSettleJob?.cancel()
+                                                    swipeCompression = initialCompression
+                                                    swipeDragging = true
+                                                }
+                                            },
                                             onDragEnd = {
                                                 val direction =
                                                     when {
@@ -245,45 +328,21 @@ private fun LunarisBarPopupWindow(
                                                         else -> 0
                                                     }
                                                 pageAccumulator = 0f
-                                                followJob?.cancel()
-                                                followJob =
-                                                    pagerScope.launch {
-                                                        pageFollow.animateTo(
-                                                            0f,
-                                                            spring(
-                                                                dampingRatio =
-                                                                    Spring.DampingRatioNoBouncy,
-                                                                stiffness = Spring.StiffnessMedium,
-                                                            ),
-                                                        )
-                                                    }
+                                                settleSwipeSquish(committed = direction != 0)
                                                 if (direction != 0) currentOnPage(direction)
                                             },
                                             onDragCancel = {
                                                 pageAccumulator = 0f
-                                                followJob?.cancel()
-                                                followJob =
-                                                    pagerScope.launch {
-                                                        pageFollow.animateTo(
-                                                            0f,
-                                                            spring(
-                                                                dampingRatio =
-                                                                    Spring.DampingRatioMediumBouncy,
-                                                                stiffness = Spring.StiffnessMedium,
-                                                            ),
-                                                        )
-                                                    }
+                                                settleSwipeSquish(committed = false)
                                             },
                                             onHorizontalDrag = { change, dragAmount ->
                                                 pageAccumulator += dragAmount
-                                                val target =
-                                                    (pageAccumulator * 0.5f).coerceIn(
-                                                        -maxFollowPx,
-                                                        maxFollowPx,
-                                                    )
-                                                followJob?.cancel()
-                                                followJob =
-                                                    pagerScope.launch { pageFollow.snapTo(target) }
+                                                if (swipeDragging) {
+                                                    val distance = kotlin.math.abs(pageAccumulator)
+                                                    val fraction = distance / (distance + pageThresholdPx)
+                                                    swipeCompression = initialCompression +
+                                                        (1f - initialCompression) * fraction
+                                                }
                                                 change.consume()
                                             },
                                         )
@@ -303,59 +362,51 @@ private fun LunarisBarPopupWindow(
                                     }
                                 else Modifier
                             )
-                            .graphicsLayer { translationX = pageFollow.value }
                 ) {
-                    AnimatedContent(
-                        targetState = viewModel,
-                        contentAlignment = Alignment.TopCenter,
-                        contentKey = {
-                            if (it.popupContent.isNotificationPopup) SystemEventKind.Notification
-                            else it.chipId
-                        },
-                        transitionSpec = {
-                            val dir = if (pageDirection >= 0) 1 else -1
-                            (slideInHorizontally(
-                                animationSpec =
-                                    tween(
-                                        if (settings.isReducedMotion) 0
-                                        else (280 / settings.animationSpeed).toInt()
-                                    )
-                            ) { w ->
-                                dir * w
-                            } +
-                                fadeIn(
-                                    animationSpec =
-                                        tween(
-                                            if (settings.isReducedMotion) 0
-                                            else (200 / settings.animationSpeed).toInt()
-                                        )
-                                )) togetherWith
-                                (slideOutHorizontally(
-                                    animationSpec =
-                                        tween(
-                                            if (settings.isReducedMotion) 0
-                                            else (240 / settings.animationSpeed).toInt()
-                                        )
-                                ) { w ->
-                                    -dir * w
-                                } +
-                                    fadeOut(
-                                        animationSpec =
-                                            tween(
-                                                if (settings.isReducedMotion) 0
-                                                else (140 / settings.animationSpeed).toInt()
-                                            )
-                                    )) using
-                                null
-                        },
-                        label = "island_popup_pager",
-                    ) { chip ->
-                        key(chip.chipId) {
-                            IslandPopupContent(chip) { expanded ->
-                                if (chip.chipId == currentChipId)
-                                    notificationReplyExpanded = expanded
-                                chip.onNotificationPopupReplyChanged(expanded)
-                            }
+                    // Only an incoming player needs its final bounds before the page swap.
+                    // Regular pages must keep the original visible-page spring resize.
+                    val preparingMusic =
+                        isVisible && !settings.isReducedMotion && fadeOutMillis > 0 &&
+                            viewModel.chipId != page.chipId &&
+                            viewModel.popupContent is PopupContentModel.Media
+                    SubcomposeLayout(
+                        modifier = Modifier.animateContentSize(
+                            animationSpec = when {
+                                settings.isReducedMotion -> tween(0)
+                                preparingMusic -> tween(
+                                    // Allow a frame for the measured size to reach the surface
+                                    // before the incoming player starts becoming visible.
+                                    durationMillis = (fadeOutMillis - 16).coerceAtLeast(1),
+                                    easing = FastOutSlowInEasing,
+                                )
+                                else -> spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = 240f * settings.animationSpeed * settings.animationSpeed,
+                                    visibilityThreshold = IntSize(1, 1),
+                                )
+                            },
+                            alignment = Alignment.TopCenter,
+                        ),
+                    ) { constraints ->
+                        // Keep the same slot host across pages so a rapid reversal does not
+                        // recreate the visible player. Only precompose a pending music page.
+                        fun measurePage(model: PopupChipModel.Shown) =
+                            subcompose(model.chipId) {
+                                Box(pageMotion, propagateMinConstraints = true) {
+                                    key(model.chipId) {
+                                        IslandPopupContent(model) { expanded ->
+                                            if (model.chipId == currentChipId)
+                                                notificationReplyExpanded = expanded
+                                            model.onNotificationPopupReplyChanged(expanded)
+                                        }
+                                    }
+                                }
+                            }.single().measure(constraints)
+
+                        val visible = measurePage(page)
+                        val target = if (preparingMusic) measurePage(viewModel) else visible
+                        layout(target.width, target.height) {
+                            visible.place((target.width - visible.width) / 2, 0)
                         }
                     }
                 }
