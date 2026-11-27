@@ -94,6 +94,11 @@ public interface NotificationLockscreenUserManager {
 
     boolean shouldShowLockscreenNotifications();
 
+    /** Whether an explicit Now Bar opt-in may ignore the current user's display preference. */
+    default boolean allowsNowBarNotificationOverride() {
+        return false;
+    }
+
     boolean isAnyProfilePublicMode();
 
     void updatePublicMode();

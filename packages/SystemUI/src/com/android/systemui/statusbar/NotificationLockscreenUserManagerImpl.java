@@ -536,6 +536,16 @@ public class NotificationLockscreenUserManagerImpl implements
         return mShowLockscreenNotifications;
     }
 
+    @Override
+    public boolean allowsNowBarNotificationOverride() {
+        // This is a user-display preference override, never a device policy override.
+        // Fail closed until both caches have been initialized for the current user.
+        final int userId = mCurrentUserId;
+        return mUsersUsersAllowingNotifications.indexOfKey(userId) >= 0
+                && !mUsersUsersAllowingNotifications.get(userId)
+                && mUsersDpcAllowingNotifications.get(userId, false);
+    }
+
     public boolean isCurrentProfile(int userId) {
         synchronized (mLock) {
             return userId == USER_ALL || mCurrentProfiles.get(userId) != null;

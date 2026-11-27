@@ -49,6 +49,7 @@ data class AxLockscreenNowBarSettings(
     val liveApps: Set<String> = emptySet(),
     val notifications: Boolean = true,
     val colorOsSwipeUp: Boolean = true,
+    val notificationsWhenHidden: Boolean = false,
 ) {
     // Null means the Now Bar is disabled. An enabled bar can have no activity sources.
     val sourceTypes: Set<String>? = if (!enabled) null else buildSet {
@@ -94,6 +95,7 @@ data class AxLockscreenNowBarSettings(
             "now_bar_recording", "now_bar_charging", "now_bar_battery_mode",
             "now_bar_flashlight", "now_bar_hotspot", "now_bar_buds",
             "now_bar_hide_call", "now_bar_notifications", "now_bar_coloros_swipe_up",
+            "now_bar_notifications_when_hidden",
         )
 
         fun read(resolver: ContentResolver, userId: Int): AxLockscreenNowBarSettings {
@@ -145,6 +147,7 @@ data class AxLockscreenNowBarSettings(
                 liveApps = packages,
                 notifications = on("now_bar_notifications", true),
                 colorOsSwipeUp = on("now_bar_coloros_swipe_up", true),
+                notificationsWhenHidden = on("now_bar_notifications_when_hidden", false),
             )
         }
     }
