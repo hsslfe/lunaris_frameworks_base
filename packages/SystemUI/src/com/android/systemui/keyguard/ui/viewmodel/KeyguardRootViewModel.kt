@@ -34,14 +34,21 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInterac
 import com.android.systemui.keyguard.domain.interactor.PulseExpansionInteractor
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.AOD
+import com.android.systemui.keyguard.shared.model.KeyguardState.DOZING
 import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.KeyguardState.OFF
 import com.android.systemui.keyguard.shared.model.KeyguardState.PRIMARY_BOUNCER
+import com.android.systemui.keyguard.shared.model.TransitionState.CANCELED
+import com.android.systemui.keyguard.shared.model.TransitionState.FINISHED
 import com.android.systemui.keyguard.shared.model.TransitionState.RUNNING
 import com.android.systemui.keyguard.shared.model.TransitionState.STARTED
+import com.android.systemui.keyguard.shared.model.TransitionStep
+import com.android.systemui.keyguard.shared.model.isPulsing
 import com.android.systemui.keyguard.ui.StateToValue
 import com.android.systemui.minmode.MinModeManager
+import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -78,6 +85,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 
 @SysUISingleton
@@ -90,6 +98,7 @@ constructor(
     private val keyguardInteractor: KeyguardInteractor,
     communalInteractor: CommunalInteractor,
     keyguardTransitionInteractor: KeyguardTransitionInteractor,
+    powerInteractor: PowerInteractor,
     private val notificationsKeyguardInteractor: NotificationsKeyguardInteractor,
     private val pulseExpansionInteractor: PulseExpansionInteractor,
     notificationShadeWindowModel: NotificationShadeWindowModel,
@@ -235,6 +244,109 @@ constructor(
                 .onStart { emit(false) },
         )
 
+    private data class LockscreenWakeReveal(
+        val step: TransitionStep = TransitionStep(),
+        val armed: Boolean = false,
+        val cycle: Int = 0,
+        val interrupted: Boolean = false,
+        val startProgress: Float = 0f,
+    )
+
+    private data class WakeRevealInput(
+        val reveal: LockscreenWakeReveal,
+        val awake: Boolean,
+        val screen: ScreenPowerState,
+        val aod: Boolean,
+        val pulsing: Boolean,
+    )
+
+    private data class WakeRevealGate(
+        val cycle: Int = 0,
+        val held: Boolean = false,
+        val sawAsleep: Boolean = false,
+        val limit: Float = 1f,
+    )
+
+    // Track the actual transition edges, including cancellation, rather than only
+    // the latest conflated progress. Sleeping from GONE never arms this reveal.
+    @Suppress("DEPRECATION")
+    @VisibleForTesting
+    val lockscreenWakeAlphaLimit: Flow<Float> =
+        combine(
+                keyguardTransitionInteractor.transitions.runningFold(LockscreenWakeReveal()) {
+                    previous, step ->
+                    when {
+                        step.from == LOCKSCREEN && step.to == DOZING -> {
+                            val newSleep = previous.step.from != LOCKSCREEN ||
+                                previous.step.to != DOZING || step.transitionState == STARTED
+                            if (newSleep) {
+                                LockscreenWakeReveal(
+                                    step = step,
+                                    armed = true,
+                                    cycle = previous.cycle + 1,
+                                    interrupted = previous.armed &&
+                                        previous.step.transitionState != FINISHED,
+                                )
+                            } else {
+                                previous.copy(step = step)
+                            }
+                        }
+                        previous.armed && step.from == DOZING && step.to == LOCKSCREEN ->
+                            previous.copy(
+                                step = step,
+                                startProgress = if (step.transitionState == STARTED ||
+                                    previous.step.from != DOZING || previous.step.to != LOCKSCREEN
+                                ) step.value else previous.startProgress,
+                            )
+                        else -> LockscreenWakeReveal(step = step, cycle = previous.cycle)
+                    }
+                }.stateIn(applicationScope, SharingStarted.Eagerly, LockscreenWakeReveal()),
+                powerInteractor.detailedWakefulness,
+                powerInteractor.screenPowerState,
+                keyguardInteractor.isAodAvailable,
+                keyguardInteractor.dozeTransitionModel.map { it.to.isPulsing() }
+                    .onStart { emit(false) }.distinctUntilChanged(),
+            ) { reveal, wakefulness, screen, aod, pulsing ->
+                WakeRevealInput(reveal, wakefulness.isAwake(), screen, aod, pulsing)
+            }
+            .runningFold(WakeRevealGate()) { previous, input ->
+                val (reveal, awake, screen, aod, pulsing) = input
+                val step = reveal.step
+                if (aod || !reveal.armed) {
+                    WakeRevealGate(cycle = reveal.cycle)
+                } else {
+                    val sameCycle = previous.cycle == reveal.cycle
+                    val sawAsleep = (sameCycle && previous.sawAsleep) || !awake
+                    val screenOff = screen == ScreenPowerState.SCREEN_OFF
+                    val held = (sameCycle && previous.held) || reveal.interrupted ||
+                        screenOff || screen == ScreenPowerState.SCREEN_TURNING_ON ||
+                        (awake && sawAsleep) || step.transitionState == CANCELED ||
+                        step.transitionState == FINISHED || step.to == LOCKSCREEN
+                    val limit = when {
+                        // Allow existing doze pulse/authentication presentation.
+                        step.to == DOZING && pulsing && !awake && !screenOff &&
+                            step.transitionState != CANCELED -> 1f
+                        step.to == DOZING -> if (held) 0f else 1f
+                        step.transitionState == CANCELED || !awake || screenOff ||
+                            screen == ScreenPowerState.SCREEN_TURNING_OFF -> 0f
+                        step.transitionState == FINISHED -> 1f
+                        else -> {
+                            // Start from zero even if an interrupted transition
+                            // resumes at nonzero progress. Leave a short reveal
+                            // window for the wallpaper, then ease in the content.
+                            val progress = if (reveal.startProgress >= 1f) 0f else
+                                ((step.value - reveal.startProgress) /
+                                    (1f - reveal.startProgress)).coerceIn(0f, 1f)
+                            val fade = ((progress - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                            fade * fade * (3f - 2f * fade)
+                        }
+                    }
+                    WakeRevealGate(reveal.cycle, held, sawAsleep, limit)
+                }
+            }
+            .map { it.limit }
+            .distinctUntilChanged()
+
     private val zoomOutFromGlanceableHub: Flow<Float> =
         if (!Flags.gestureBetweenHubAndLockscreenMotion()) {
                 emptyFlow()
@@ -316,6 +428,7 @@ constructor(
     fun alpha(viewState: ViewStateAccessor): Flow<Float> {
         return combine(
                 hideKeyguard,
+                lockscreenWakeAlphaLimit,
                 // The transitions are mutually exclusive, so they are safe to merge to get the last
                 // value emitted by any of them. Do not add flows that cannot make this guarantee.
                 merge(
@@ -367,11 +480,11 @@ constructor(
                         primaryBouncerToLockscreenTransitionViewModel.lockscreenAlpha(viewState),
                     )
                     .onStart { emit(0f) },
-            ) { hideKeyguard, alpha ->
+            ) { hideKeyguard, wakeAlphaLimit, alpha ->
                 if (hideKeyguard) {
                     0f
                 } else {
-                    alpha
+                    minOf(alpha, wakeAlphaLimit)
                 }
             }
             .distinctUntilChanged()
