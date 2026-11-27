@@ -80,7 +80,12 @@ constructor(
         interactor.uiState
             .map { uiState ->
                 if (!uiState.shouldShow) return@map null
-                val alert = uiState.notificationAlert
+                // Unlock feedback temporarily owns the primary island. Keep the
+                // pending heads-up alert in the interactor so it can resume after
+                // the short biometric event is dismissed.
+                val alert = uiState.notificationAlert?.takeUnless {
+                    uiState.events.any { it is IslandEvent.BiometricUnlock }
+                }
                 val topEvent = uiState.topEvent ?: alert ?: return@map null
                 AxDynamicBarChipState(
                     event = topEvent,
