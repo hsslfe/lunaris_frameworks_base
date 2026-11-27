@@ -62,6 +62,7 @@ import android.util.Pair;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.animation.Interpolator;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -109,6 +110,8 @@ import com.android.systemui.media.dialog.MediaOutputDialogManager;
 import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.FalsingManager;
+import com.android.systemui.axdynamicbar.ui.AxDynamicBarColorOsController;
+import com.android.systemui.statusbar.notification.stack.MediaContainerView;
 import com.android.systemui.pulse.PulseAudioBridge;
 import com.android.systemui.pulse.PulseSettingsRepository;
 import com.android.systemui.res.R;
@@ -1329,7 +1332,7 @@ public class MediaControlPanel {
             } else {
                 button.setEnabled(true);
                 button.setOnClickListener(v -> {
-                    if (!mFalsingManager.isFalseTap(FalsingManager.MODERATE_PENALTY)) {
+                    if (isMediaActionTapAllowed(button)) {
                         mLogger.logTapAction(button.getId(), mUid, mPackageName, mInstanceId);
                         // Used to determine whether to play turbulence noise.
                         mWasPlaying = isPlaying();
@@ -1351,6 +1354,31 @@ public class MediaControlPanel {
         } else {
             clearButton(button);
         }
+    }
+
+    private boolean isMediaActionTapAllowed(ImageButton button) {
+        // ColorOS explicitly reveals this lockscreen player through the pill.
+        // A clean transport-control tap must not require a second tap solely
+        // because the preceding reveal gesture raised falsing's history score.
+        final int id = button.getId();
+        if ((id == R.id.actionPrev || id == R.id.actionNext || id == R.id.actionPlayPause)
+                && button.isEnabled() && button.isShown()
+                && mKeyguardStateController.isShowing()) {
+            AxDynamicBarColorOsController colorOs = AxDynamicBarColorOsController.getOrNull();
+            if (colorOs != null && colorOs.isStackGatingActive() && colorOs.isStackRevealed()) {
+                for (ViewParent parent = button.getParent(); parent instanceof View;
+                        parent = parent.getParent()) {
+                    if (parent instanceof MediaContainerView) {
+                        if (mFalsingManager.isSimpleTap()) {
+                            return true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        // Keep normal falsing for gestures, other media actions and other surfaces.
+        return !mFalsingManager.isFalseTap(FalsingManager.MODERATE_PENALTY);
     }
 
     private RippleAnimation createTouchRippleAnimation(ImageButton button) {
