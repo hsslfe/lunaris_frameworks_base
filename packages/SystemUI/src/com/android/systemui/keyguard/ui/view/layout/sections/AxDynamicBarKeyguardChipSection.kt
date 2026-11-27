@@ -4,6 +4,7 @@ import android.content.Context
 import android.transition.TransitionManager
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.lifecycle.Lifecycle
@@ -20,10 +21,11 @@ import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.media.MediaViewController
 import com.android.systemui.res.R
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockViewIds
+import com.android.systemui.shared.R as SharedR
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.KeyguardIndicationController
 import com.android.systemui.statusbar.notification.stack.ui.view.SharedNotificationContainer
-import com.android.systemui.util.ScrimUtils
 import com.android.systemui.util.WallpaperDepthUtils
 import javax.inject.Inject
 import org.lunaris.extrainfowidgets.ExtraInfoFreeformView
@@ -39,8 +41,6 @@ private const val EXPANDED_TOP_PROTECTION_DP = 16f
 private const val EXPANDED_BOTTOM_PROTECTION_DP = 16f
 private const val UNSET = -1
 
-private const val HIDDEN_VIEWS_FADE_DURATION_START_MS = 50L
-private const val HIDDEN_VIEWS_FADE_DURATION_END_MS = 250L
 
 private fun extraBottomMarginPx(context: Context): Int =
     context.resources.getDimensionPixelSize(
@@ -53,9 +53,21 @@ private val HIDDEN_VIEW_IDS =
         R.id.default_weather_image,
         R.id.default_weather_text,
         R.id.clock_ls,
+        R.id.dynamic_clock_ls,
+        R.id.lockscreen_clock_view,
+        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE,
         R.id.keyguard_info_widgets,
         R.id.keyguard_widgets,
+        R.id.keyguard_app_widgets,
+        R.id.keyguard_independent_info_widgets,
+        R.id.left_aligned_notification_icon_container,
+        R.id.status_view_media_container,
         R.id.bc_smartspace_view,
+        SharedR.id.date_smartspace_view,
+        SharedR.id.date_smartspace_view_large,
+        SharedR.id.weather_smartspace_view,
+        SharedR.id.weather_smartspace_view_large,
         R.id.smartspace_card_pager,
         R.id.smartspace_page_indicator,
         R.id.keyguard_slice_view,
@@ -81,8 +93,14 @@ constructor(
     private val dismissViewId = R.id.ax_dynamic_bar_keyguard_dismiss_area
     private var bindHandle: DisposableHandle? = null
     private var expansionHandle: DisposableHandle? = null
-    private var enforceAction: Runnable? = null
-    private val hiddenViews = mutableSetOf<View>()
+    private var enforceAction: ViewTreeObserver.OnPreDrawListener? = null
+    private var enforceObserver: ViewTreeObserver? = null
+
+    private data class ContentPresentation(val transitionAlpha: Float, val accessibility: Int)
+
+    private val hiddenViews = mutableMapOf<View, ContentPresentation>()
+    private var panelOriginalTranslationZ: Float? = null
+    private var dismissOriginalTranslationZ: Float? = null
     private var expandedExitPending = false
     private var notificationStackOccluded = false
 
@@ -273,16 +291,26 @@ constructor(
     }
 
     private fun rebindPreDrawAction(constraintLayout: ConstraintLayout, expanded: Boolean) {
-        enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
-        enforceAction =
-            if (expanded) {
-                Runnable { enforceHidden(constraintLayout) }
-                    .also { ScrimUtils.get().addKeyguardPreDrawAction(it) }
-            } else null
+        enforceAction?.let { listener ->
+            enforceObserver?.takeIf { it.isAlive }?.removeOnPreDrawListener(listener)
+        }
+        enforceAction = null
+        enforceObserver = null
+        if (!expanded) return
+
+        // Follow the actual panel host rather than the separately rebound scrim observer.
+        val observer = constraintLayout.viewTreeObserver
+        enforceObserver = observer
+        enforceAction = ViewTreeObserver.OnPreDrawListener {
+            if (expandedExitPending || viewModel.isKeyguardExpanded.value) {
+                enforceHidden(constraintLayout)
+            }
+            true
+        }.also { observer.addOnPreDrawListener(it) }
     }
 
     private fun hiddenTargets(constraintLayout: ConstraintLayout): List<View> =
-        HIDDEN_VIEW_IDS.mapNotNull { constraintLayout.rootView.findViewById<View>(it) }
+        HIDDEN_VIEW_IDS.mapNotNull { constraintLayout.findViewById<View>(it) }.distinct()
 
     private fun setIndependentWidgetsSuppressed(constraintLayout: ConstraintLayout, suppressed: Boolean) {
         constraintLayout.findViewById<ExtraInfoFreeformView>(R.id.keyguard_independent_info_widgets)
@@ -290,48 +318,57 @@ constructor(
     }
 
     private fun setHiddenViewsVisibility(constraintLayout: ConstraintLayout, visibility: Int) {
-        setIndependentWidgetsSuppressed(constraintLayout, visibility != View.VISIBLE)
-        if (visibility == View.VISIBLE) {
-            hiddenViews.forEach { v ->
-                v.animate().cancel()
-                if (v.visibility == View.GONE) {
-                    v.alpha = 1f
-                } else {
-                    if (v.visibility != View.VISIBLE) {
-                        v.alpha = 0f
-                        v.visibility = View.VISIBLE
-                    }
-                    v.animate()
-                        .alpha(1f)
-                        .setDuration(HIDDEN_VIEWS_FADE_DURATION_START_MS)
-                        .withEndAction(null)
-                        .start()
-                }
-            }
-            hiddenViews.clear()
-        } else {
-            hiddenTargets(constraintLayout).filter { it.visibility == View.VISIBLE }.forEach { v ->
-                hiddenViews.add(v)
-                v.animate().cancel()
-                v.animate()
-                    .alpha(0f)
-                    .setDuration(HIDDEN_VIEWS_FADE_DURATION_END_MS)
-                    .withEndAction {
-                        if (v.visibility == View.VISIBLE) v.visibility = visibility
-                    }
-                    .start()
-            }
+        if (visibility != View.VISIBLE) {
+            enforceHidden(constraintLayout)
+            return
         }
+        // Release only our override, not the visibility or alpha owned by keyguard.
+        hiddenViews.forEach { (view, presentation) ->
+            view.transitionAlpha = presentation.transitionAlpha
+            view.importantForAccessibility = presentation.accessibility
+        }
+        hiddenViews.clear()
+        setIndependentWidgetsSuppressed(constraintLayout, false)
+        constraintLayout.findViewById<View>(chipViewId)?.let { view ->
+            panelOriginalTranslationZ?.let { view.translationZ = it }
+        }
+        constraintLayout.findViewById<View>(dismissViewId)?.let { view ->
+            dismissOriginalTranslationZ?.let { view.translationZ = it }
+        }
+        panelOriginalTranslationZ = null
+        dismissOriginalTranslationZ = null
     }
 
     private fun enforceHidden(constraintLayout: ConstraintLayout) {
         setIndependentWidgetsSuppressed(constraintLayout, true)
-        hiddenTargets(constraintLayout).forEach { v ->
-            if (v.visibility == View.VISIBLE) {
-                hiddenViews.add(v)
-                v.visibility = View.INVISIBLE
+        val targets = hiddenTargets(constraintLayout)
+        targets.forEach { view ->
+            hiddenViews.getOrPut(view) {
+                ContentPresentation(view.transitionAlpha, view.importantForAccessibility)
+            }
+            if (view.transitionAlpha != 0f) view.transitionAlpha = 0f
+            if (view.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) {
+                view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             }
         }
+
+        // Elevated clock/widget sections otherwise render over the activity
+        // even when it was added later.
+        val panel = constraintLayout.findViewById<View>(chipViewId) ?: return
+        val dismiss = constraintLayout.findViewById<View>(dismissViewId) ?: return
+        if (panelOriginalTranslationZ == null) panelOriginalTranslationZ = panel.translationZ
+        if (dismissOriginalTranslationZ == null) dismissOriginalTranslationZ = dismiss.translationZ
+        val topContentZ = targets.maxOfOrNull { target ->
+            var child = target
+            while (child.parent is View && child.parent !== constraintLayout) {
+                child = child.parent as View
+            }
+            if (child.parent === constraintLayout) child.z else 0f
+        } ?: 0f
+        val dismissZ = maxOf(dismissOriginalTranslationZ ?: 0f, topContentZ + 1f - dismiss.elevation)
+        if (dismiss.translationZ != dismissZ) dismiss.translationZ = dismissZ
+        val panelZ = maxOf(panelOriginalTranslationZ ?: 0f, dismiss.z + 1f - panel.elevation)
+        if (panel.translationZ != panelZ) panel.translationZ = panelZ
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
@@ -479,8 +516,7 @@ constructor(
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
         TransitionManager.endTransitions(constraintLayout)
-        enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
-        enforceAction = null
+        rebindPreDrawAction(constraintLayout, false)
         expandedExitPending = false
         notificationStackOccluded = false
         constraintLayout.rootView
