@@ -47,12 +47,15 @@ data class AxLockscreenNowBarSettings(
     val hotspot: Boolean = false,
     val buds: Boolean = true,
     val liveApps: Set<String> = emptySet(),
+    val notifications: Boolean = true,
+    val colorOsSwipeUp: Boolean = true,
 ) {
     // Null means the Now Bar is disabled. An enabled bar can have no activity sources.
     val sourceTypes: Set<String>? = if (!enabled) null else buildSet {
         if (music) addAll(listOf("media", "now_playing"))
         if (timers) addAll(listOf("timer", "stopwatch", "alarm"))
         if (calls) add("call")
+        if (notifications) add("notification")
         if (live) add("promoted_ongoing")
         if (scores) add("sports")
         if (recording) add("audio_recording")
@@ -67,6 +70,7 @@ data class AxLockscreenNowBarSettings(
         is IslandEvent.Media, is IslandEvent.NowPlaying -> music
         is IslandEvent.Timer, is IslandEvent.Stopwatch, is IslandEvent.Alarm -> timers
         is IslandEvent.Call -> calls
+        is IslandEvent.Notification -> notifications
         is IslandEvent.AudioRecording -> recording
         is IslandEvent.Charging -> charging
         is IslandEvent.Torch -> flashlight
@@ -89,7 +93,7 @@ data class AxLockscreenNowBarSettings(
             "now_bar_live_updates", "now_bar_live_apps", "now_bar_scores",
             "now_bar_recording", "now_bar_charging", "now_bar_battery_mode",
             "now_bar_flashlight", "now_bar_hotspot", "now_bar_buds",
-            "now_bar_hide_call",
+            "now_bar_hide_call", "now_bar_notifications", "now_bar_coloros_swipe_up",
         )
 
         fun read(resolver: ContentResolver, userId: Int): AxLockscreenNowBarSettings {
@@ -139,6 +143,8 @@ data class AxLockscreenNowBarSettings(
                 hotspot = on("now_bar_hotspot", false),
                 buds = on("now_bar_buds", true),
                 liveApps = packages,
+                notifications = on("now_bar_notifications", true),
+                colorOsSwipeUp = on("now_bar_coloros_swipe_up", true),
             )
         }
     }

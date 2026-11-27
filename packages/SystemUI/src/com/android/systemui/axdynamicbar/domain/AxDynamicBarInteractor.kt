@@ -234,6 +234,7 @@ constructor(
                     }
                     _isOnKeyguard.value = newState == StatusBarState.KEYGUARD
                     repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
+                    refreshNowBarNotifications()
                     if (newState != StatusBarState.SHADE) dismissNotificationAlert()
                     updateChipVisibility()
                 }
@@ -290,8 +291,11 @@ constructor(
                 if (_isOnKeyguard.value && sources?.contains("charging") == true) {
                     autoDismissJobs.remove("charging")?.cancel()
                 }
-                if (enabled || pillEnabled || sources != null) repository.startListening()
-                else {
+                if (enabled || pillEnabled || sources != null) {
+                    repository.startListening()
+                    refreshNowBarNotifications()
+                } else {
+                    repository.notification.updateVisibleNotifications = false
                     repository.stopListening()
                     autoDismissJobs.values.forEach { it.cancel() }
                     autoDismissJobs.clear()
@@ -345,7 +349,15 @@ constructor(
                     if (onKeyguard && e is IslandEvent.AppSwitch) return@mapNotNull null
                     if (!onKeyguard && e is IslandEvent.KeyguardIndication) return@mapNotNull null
                     if (onKeyguard && e is IslandEvent.Notification) {
-                        applyKeyguardNotificationPrivacy(e)
+                        applyKeyguardNotificationPrivacy(e)?.let { notification ->
+                            if (settings.nowBarAppearance.value.enabled && notification.isRedacted) {
+                                // Do not retain private conversation content in the rendered activity.
+                                notification.copy(title = null, text = null, senderName = null,
+                                    senderIcon = null, conversationTitle = null, notificationImage = null,
+                                    actions = emptyList(), replyAction = null, isConversation = false,
+                                    isGroupConversation = false)
+                            } else notification
+                        }
                     } else {
                         e
                     }
@@ -707,11 +719,22 @@ constructor(
             }
     }
 
+    private fun refreshNowBarNotifications() {
+        val active = _isOnKeyguard.value && settings.isNowBarNotificationEnabled()
+        repository.notification.updateVisibleNotifications = active
+        if (active) {
+            repository.notification.refreshLockscreenNotifications(
+                notifCollection.allNotifs.map { it.sbn },
+            )
+        }
+    }
+
     private fun applyKeyguardNotificationPrivacy(
         event: IslandEvent.Notification,
     ): IslandEvent.Notification? {
         if (!lockscreenUserManager.shouldShowLockscreenNotifications()) return null
         val entry = notifCollection.getEntry(event.sbn.key)
+        if (entry == null && settings.nowBarAppearance.value.enabled) return null
         if (entry != null && keyguardNotificationVisibilityProvider.shouldHideNotification(entry)) {
             return null
         }

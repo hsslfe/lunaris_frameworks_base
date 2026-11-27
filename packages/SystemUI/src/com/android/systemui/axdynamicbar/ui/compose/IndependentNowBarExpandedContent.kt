@@ -251,6 +251,15 @@ internal fun AnimatedVisibilityScope.IndependentNowBarExpandedContent(
                     is IslandEvent.Timer -> KeyguardTimerPanel(event, interactor)
                     is IslandEvent.Stopwatch -> KeyguardStopwatchPanel(event, interactor)
                     is IslandEvent.AudioRecording -> KeyguardAudioRecordingPanel(event, interactor)
+                    is IslandEvent.Notification -> {
+                        // Never retain private content from the collapsing panel snapshot.
+                        val current = allEvents.firstOrNull { it.id == event.id } as? IslandEvent.Notification
+                        if (current != null) {
+                            KeyguardNotificationPanel(current, interactor, onCollapse)
+                        } else {
+                            LaunchedEffect(event.id) { onCollapse() }
+                        }
+                    }
                     else -> KeyguardGenericPanel(event, interactor, hapticsViewModelFactory)
                 }
             }
@@ -1125,6 +1134,75 @@ private fun KeyguardAudioRecordingPanel(event: IslandEvent.AudioRecording, inter
         }
     }
 }
+}
+
+@Composable
+private fun KeyguardNotificationPanel(
+    event: IslandEvent.Notification,
+    interactor: IslandActions,
+    onCollapse: () -> Unit,
+) {
+    val colors = rememberIslandColors(event)
+    val appName = event.appName.ifBlank { stringResource(R.string.ax_dynamic_bar_notification) }
+    val title = if (event.isRedacted) appName else
+        event.senderName?.takeIf { event.isConversation && it.isNotBlank() }
+            ?: event.title?.takeIf { it.isNotBlank() } ?: appName
+    val message = if (event.isRedacted) stringResource(R.string.ax_dynamic_bar_sensitive_content)
+        else event.text?.takeIf { it.isNotBlank() && it != title }
+
+    KeyguardPanelSurface {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(SpaceSection),
+            verticalArrangement = Arrangement.spacedBy(SpaceLg),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SpaceMd),
+            ) {
+                KeyguardNotificationPillIcon(event, colors.accent, MaterialTheme.colorScheme.onSurface, 44.dp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        appName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (title != appName) {
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (!message.isNullOrBlank()) {
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            // Do not inflate private RemoteViews or run reply/action intents on keyguard.
+            if (event.sbn.notification?.contentIntent != null) {
+                ExpressivePillButton(
+                    label = stringResource(R.string.ax_dynamic_bar_open),
+                    contentColor = colors.onAccent,
+                    backgroundColor = colors.accent,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        onCollapse()
+                        interactor.launchNotificationDismissingKeyguard(event)
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

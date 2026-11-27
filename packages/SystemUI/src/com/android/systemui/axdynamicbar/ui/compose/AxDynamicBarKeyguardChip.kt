@@ -89,6 +89,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -232,11 +233,21 @@ private fun LegacyAxDynamicBarKeyguardChip(
 
     Box(modifier = modifier) {
 
+        var lastPanelEvent by remember { mutableStateOf<IslandEvent?>(null) }
+        var collapsedHostReady by remember { mutableStateOf(!isKeyguardExpanded) }
+        LaunchedEffect(isKeyguardExpanded) {
+            if (isKeyguardExpanded) collapsedHostReady = false
+        }
+        if (isKeyguardExpanded && panelEvent != null) lastPanelEvent = panelEvent
         val expandedVisibleState = remember { MutableTransitionState(false) }
-        expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded && panelEvent != null
-        LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
-            if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+        expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded &&
+            (panelEvent != null || lastPanelEvent != null)
+        LaunchedEffect(isKeyguardExpanded, expandedVisibleState.isIdle, expandedVisibleState.currentState) {
+            if (!isKeyguardExpanded && expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+                lastPanelEvent = null
                 viewModel.keyguardExpansion.notifyCollapseSettled()
+                withFrameNanos { }
+                if (!viewModel.keyguardExpansion.isExpanded.value) collapsedHostReady = true
             }
         }
         AnimatedVisibility(
@@ -247,7 +258,8 @@ private fun LegacyAxDynamicBarKeyguardChip(
                 .fillMaxWidth()
                 .align(Alignment.Center),
         ) {
-            panelEvent?.let { event ->
+            (panelEvent ?: lastPanelEvent)?.let { event ->
+                if (event is IslandEvent.Notification && panelEvent == null) return@let
                 KeyguardExpandedContent(
                     event = event,
                     interactor = viewModel.interactor,
@@ -306,9 +318,11 @@ private fun LegacyAxDynamicBarKeyguardChip(
             }
         }
 
+        if (!isKeyguardExpanded && collapsedHostReady && expandedVisibleState.isIdle &&
+            !expandedVisibleState.currentState) {
         val chipEnterDelay = if (isKeyguardColorOsActive) 130 else 300
         AnimatedVisibility(
-            visible = isKeyguardChipVisible && !isKeyguardExpanded && !isKeyguardColorOsRevealed,
+            visible = isKeyguardChipVisible && !isKeyguardColorOsRevealed,
             enter = fadeIn(
                 tween(
                     durationMillis = if (isKeyguardColorOsActive) 140 else 200,
@@ -486,6 +500,7 @@ private fun LegacyAxDynamicBarKeyguardChip(
                     modifier,
                 )
             }
+        }
         }
     }
 }
@@ -892,11 +907,15 @@ private fun KeyguardChipBody(
 }
 
 @Composable
-private fun KeyguardNotificationPillIcon(
+internal fun KeyguardNotificationPillIcon(
     event: IslandEvent.Notification,
     accent: Color,
     contentColor: Color,
+    iconSize: Dp = MusicActionSize,
 ) {
+    val badgeSize = if (iconSize == MusicActionSize) NotifAvatarBadgeSize else (iconSize.value * 0.38f).dp
+    val appShape = if (iconSize == MusicActionSize) NotifAppIconShape else RoundedCornerShape((iconSize.value * 0.24f).dp)
+    val badgeShape = if (iconSize == MusicActionSize) NotifAvatarBadgeShape else RoundedCornerShape((badgeSize.value * 0.30f).dp)
     val showAvatar = !event.isRedacted && event.isConversation && event.senderIcon != null
     val mainIcon = if (showAvatar) event.senderIcon else event.appIcon
     val badgeIcon = if (showAvatar) event.appIcon else null
@@ -904,24 +923,24 @@ private fun KeyguardNotificationPillIcon(
 
     when {
         showAvatar && mainIcon != null -> {
-            Box(modifier = Modifier.size(MusicActionSize)) {
+            Box(modifier = Modifier.size(iconSize)) {
                 Image(
-                    bitmap = mainIcon.toSquareScaledBitmap(MusicActionSize),
+                    bitmap = mainIcon.toSquareScaledBitmap(iconSize),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(MusicActionSize)
+                        .size(iconSize)
                         .clip(CircleShape),
                     contentScale = ContentScale.Crop,
                 )
                 badgeIcon?.let { appDrawable ->
                     Image(
-                        bitmap = appDrawable.toScaledBitmap(NotifAvatarBadgeSize),
+                        bitmap = appDrawable.toScaledBitmap(badgeSize),
                         contentDescription = null,
                         modifier = Modifier
-                            .size(NotifAvatarBadgeSize)
+                            .size(badgeSize)
                             .align(Alignment.BottomEnd)
-                            .clip(NotifAvatarBadgeShape)
-                            .border(1.dp, badgeBorderColor, NotifAvatarBadgeShape),
+                            .clip(badgeShape)
+                            .border(1.dp, badgeBorderColor, badgeShape),
                         contentScale = ContentScale.Crop,
                     )
                 }
@@ -929,19 +948,19 @@ private fun KeyguardNotificationPillIcon(
         }
         mainIcon != null -> {
             Image(
-                bitmap = mainIcon.toScaledBitmap(MusicActionSize),
+                bitmap = mainIcon.toScaledBitmap(iconSize),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(MusicActionSize)
-                    .clip(NotifAppIconShape),
+                    .size(iconSize)
+                    .clip(appShape),
                 contentScale = ContentScale.Crop,
             )
         }
         else -> {
             Box(
                 modifier = Modifier
-                    .size(MusicActionSize)
-                    .clip(NotifAppIconShape)
+                    .size(iconSize)
+                    .clip(appShape)
                     .background(lerp(accent, contentColor, AlphaSubtle).copy(alpha = 0.35f)),
                 contentAlignment = Alignment.Center,
             ) {

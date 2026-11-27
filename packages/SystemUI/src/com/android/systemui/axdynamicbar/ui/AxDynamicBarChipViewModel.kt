@@ -284,7 +284,8 @@ constructor(
     val isKeyguardChipVisible: StateFlow<Boolean> =
         combine(
             isOnKeyguard,
-            combine(isKeyguardEnabled, classicMusicVisible) { kg, music -> kg to music },
+            isKeyguardMusicPillEnabled,
+            isKeyguardEnabled,
             combine(nowBarAppearance, interactor.isDozing) { style, dozing ->
                 style to dozing
             },
@@ -294,7 +295,7 @@ constructor(
             ) { state, info, hasText, batteryReady ->
                 Triple(state, info.isCharging, !hasText && batteryReady)
             },
-        ) { onKeyguard, (keyguardEnabled, musicVisible), (nowBar, dozing),
+        ) { onKeyguard, pillEnabled, keyguardEnabled, (nowBar, dozing),
                 (state, charging, canShowIdleBattery) ->
             onKeyguard && if (nowBar.enabled) {
                 // A live activity has priority. Otherwise the Always-mode
@@ -304,7 +305,7 @@ constructor(
                 } == true || (nowBar.charging && nowBar.batteryMode == 1 &&
                     !charging && canShowIdleBattery))
             } else {
-                keyguardEnabled || musicVisible
+                keyguardEnabled || (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
             }
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)

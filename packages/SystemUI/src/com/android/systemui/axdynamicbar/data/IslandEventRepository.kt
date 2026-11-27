@@ -88,7 +88,7 @@ constructor(
 
     private fun needsNowBarNotifications(): Boolean = listOf(
         "timer", "stopwatch", "alarm", "call", "promoted_ongoing",
-        "sports", "audio_recording", "now_playing",
+        "sports", "audio_recording", "now_playing", "notification",
     ).any(::isNowBarTypeEnabled)
 
     fun startListening() {

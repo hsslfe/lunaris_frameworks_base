@@ -146,6 +146,8 @@ constructor(
                                 WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
+                                viewModel.keyguardExpansion.setPanelHostExpanded(false)
+                                constraintLayout.rootView.findViewById<View>(R.id.shared_notification_container)?.invalidate()
                             }
                         }
                     }
@@ -211,6 +213,8 @@ constructor(
         scrim.isClickable = expanded
         if (expanded) {
             expandedExitPending = true
+            viewModel.keyguardExpansion.setPanelHostExpanded(true)
+            constraintLayout.rootView.findViewById<View>(R.id.shared_notification_container)?.invalidate()
             WallpaperDepthUtils.get()?.setDynamicBarExpanded(true)
             scrim.visibility = View.VISIBLE
             scrim.animate().alpha(1f).setDuration(200L).withEndAction(null).start()
@@ -225,6 +229,8 @@ constructor(
         TransitionManager.endTransitions(constraintLayout)
         if (!expanded && (!expandedExitPending || !viewModel.keyguardExpansion.canShow.value)) {
             expandedExitPending = false
+            viewModel.keyguardExpansion.setPanelHostExpanded(false)
+            constraintLayout.rootView.findViewById<View>(R.id.shared_notification_container)?.invalidate()
             WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
@@ -444,6 +450,8 @@ constructor(
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
         expandedExitPending = false
+        viewModel.keyguardExpansion.setPanelHostExpanded(false)
+        constraintLayout.rootView.findViewById<View>(R.id.shared_notification_container)?.invalidate()
         constraintLayout.findViewById<View>(dismissViewId)?.animate()?.cancel()
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
         MediaViewController.getOrNull()?.setExpandedMusicOpen(false)

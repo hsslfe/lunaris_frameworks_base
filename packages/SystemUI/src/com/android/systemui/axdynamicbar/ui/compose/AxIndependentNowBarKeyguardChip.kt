@@ -6,6 +6,12 @@ import com.android.systemui.statusbar.chips.ui.model.OngoingActivityChipModel
 import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.view.HapticFeedbackConstants
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.axion.blur.AxBlurBackgroundRenderer
@@ -154,7 +160,7 @@ private val ActionIconSize = SizeBadge
 private val BatteryIconSize = ChipHeight - SpaceXxl
 private val CountBadgeHeight = ChipHeight / 2
 
-private class MusicPillBlurHost(context: Context) : View(context) {
+private class NowBarMusicPillBlurHost(context: Context) : View(context) {
     private val blur = AxBlurBackgroundRenderer(this)
     private val overlayColor = AxBlurColors.surfaceLightTint(context)
 
@@ -217,7 +223,10 @@ internal fun IndependentNowBarKeyguardChip(
     val keyguardBatteryChipMode by viewModel.keyguardBatteryChipMode.collectAsStateWithLifecycle()
     val batteryInfo by viewModel.keyguardBatteryInfo.collectAsStateWithLifecycle()
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
+    val isKeyguardColorOsActive by viewModel.isKeyguardColorOsActive.collectAsStateWithLifecycle()
+    val isKeyguardColorOsRevealed by viewModel.isKeyguardColorOsRevealed.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
+    val touchView = LocalView.current
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
     val hasNowBarActivity = state?.allEvents?.any {
@@ -269,11 +278,62 @@ internal fun IndependentNowBarKeyguardChip(
             (state ?: lastExpandedState)?.let {
                 IndependentNowBarExpandedContent(
                     event = it.event,
-                    allEvents = it.allEvents,
+                    allEvents = if (it.event is IslandEvent.Notification) {
+                        state?.allEvents.orEmpty()
+                    } else it.allEvents,
                     interactor = viewModel.interactor,
                     onCollapse = { viewModel.keyguardExpansion.collapse() },
                     hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
                 )
+            }
+        }
+
+        val impactScaleX = remember { Animatable(1f) }
+        val impactScaleY = remember { Animatable(1f) }
+        val impactOffsetYDp = remember { Animatable(0f) }
+        var wasColorOsRevealed by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isKeyguardColorOsRevealed, isKeyguardColorOsActive, isKeyguardChipVisible) {
+            val justCollapsed = wasColorOsRevealed && !isKeyguardColorOsRevealed
+            wasColorOsRevealed = isKeyguardColorOsRevealed
+            if (justCollapsed && isKeyguardColorOsActive && isKeyguardChipVisible) {
+                delay(155L)
+                coroutineScope {
+                    launch {
+                        impactScaleX.animateTo(
+                            targetValue = 1.09f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactScaleX.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.44f, stiffness = 420f),
+                        )
+                    }
+                    launch {
+                        impactScaleY.animateTo(
+                            targetValue = 0.87f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactScaleY.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.44f, stiffness = 420f),
+                        )
+                    }
+                    launch {
+                        impactOffsetYDp.animateTo(
+                            targetValue = 3f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactOffsetYDp.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(dampingRatio = 0.46f, stiffness = 400f),
+                        )
+                    }
+                }
+            } else if (isKeyguardColorOsRevealed || !isKeyguardColorOsActive || !isKeyguardChipVisible) {
+                impactScaleX.snapTo(1f)
+                impactScaleY.snapTo(1f)
+                impactOffsetYDp.snapTo(0f)
             }
         }
 
@@ -284,41 +344,84 @@ internal fun IndependentNowBarKeyguardChip(
             !expandedVisibleState.currentState) {
         val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
         val pillVisibility = remember { MutableTransitionState(false) }
-        pillVisibility.targetState = isKeyguardChipVisible
+        pillVisibility.targetState = isKeyguardChipVisible && !isKeyguardColorOsRevealed
         AnimatedVisibility(
             visibleState = pillVisibility,
-            enter = if (showIdleBatteryOnly) EnterTransition.None else
-                fadeIn(tween(110)) + scaleIn(initialScale = 0.86f,
-                    animationSpec = spring(dampingRatio = 0.69f, stiffness = 700f)),
-            exit = ExitTransition.None,
+            enter = when {
+                showIdleBatteryOnly -> EnterTransition.None
+                isKeyguardColorOsActive -> fadeIn(tween(140, delayMillis = 130)) +
+                    scaleIn(initialScale = 0.92f, animationSpec = tween(130, delayMillis = 130))
+                else -> fadeIn(tween(110)) + scaleIn(initialScale = 0.86f,
+                    animationSpec = spring(dampingRatio = 0.69f, stiffness = 700f))
+            },
+            exit = if (isKeyguardColorOsActive && isKeyguardColorOsRevealed)
+                fadeOut(tween(90)) + scaleOut(targetScale = 0.94f, animationSpec = tween(110))
+            else ExitTransition.None,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .pointerInput(viewModel, state?.event?.id) {
+                .onGloballyPositioned { coords ->
+                    if (isKeyguardColorOsActive && !isKeyguardColorOsRevealed && hasNowBarActivity) {
+                        val bounds = coords.boundsInWindow()
+                        if (bounds.width > 0f && bounds.height > 0f) {
+                            viewModel.colorOsController.updatePillAnchorRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        }
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = impactScaleX.value
+                    scaleY = impactScaleY.value
+                    translationY = impactOffsetYDp.value.dp.toPx()
+                }
+                .pointerInput(viewModel, touchView, touchSlop, state?.event?.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial)
                         val start = down.position
+                        val canSwipeUp = viewModel.colorOsController.canRevealFromNowBar()
+                        val parent = if (canSwipeUp) touchView.parent else null
+                        // Keep a pill-originated upward drag out of the unlock gesture.
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        val revealDistance = maxOf(32.dp.toPx(), touchSlop * 2f)
                         var dragging = false
+                        var revealing = false
                         var totalDx = 0f
-                        var canceled = false
                         try {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 val dx = change.position.x - start.x
                                 val dy = change.position.y - start.y
+                                if (event.changes.any { it.id != down.id && it.pressed }) {
+                                    if (dragging || revealing) change.consume()
+                                    break
+                                }
                                 if (!change.pressed) {
-                                    if (dragging && !canceled && !change.isConsumed) {
+                                    if (revealing && !change.isConsumed) {
+                                        change.consume()
+                                        if (-dy >= revealDistance &&
+                                            viewModel.colorOsController.revealFromNowBar()
+                                        ) {
+                                            touchView.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        }
+                                    } else if (dragging && !change.isConsumed) {
                                         change.consume()
                                         swipe.cycle(previous = totalDx > 0f)
                                     }
                                     break
                                 }
-                                if (change.isConsumed && !dragging) { canceled = true; break }
-                                if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
-                                    if (abs(dy) >= abs(dx)) break
-                                    dragging = true
+                                if (change.isConsumed && !dragging && !revealing) break
+                                if (!dragging && !revealing &&
+                                    (abs(dx) > touchSlop || abs(dy) > touchSlop)
+                                ) {
+                                    if (abs(dy) >= abs(dx)) {
+                                        if (dy >= 0f || !canSwipeUp) break
+                                        revealing = true
+                                    } else {
+                                        dragging = true
+                                    }
                                 }
-                                if (dragging) {
+                                if (revealing) {
+                                    change.consume()
+                                } else if (dragging) {
                                     totalDx = dx
                                     swipe.drag(dx, touchSlop)
                                     change.consume()
@@ -326,6 +429,7 @@ internal fun IndependentNowBarKeyguardChip(
                             }
                         } finally {
                             swipe.release()
+                            parent?.requestDisallowInterceptTouchEvent(false)
                         }
                     }
                 }
@@ -376,7 +480,13 @@ internal fun IndependentNowBarKeyguardChip(
                     travel = { 14.dp },
                     direction = { from, to -> swipe.direction(from, to, chipState.allEvents) },
                     durationMillis = 245,
-                ) { event, pageMotion ->
+                ) { pageEvent, pageMotion ->
+                    // Outgoing notification pages must use the current privacy-filtered event,
+                    // never a stale snapshot during a swipe, removal, or redaction change.
+                    val event = if (pageEvent is IslandEvent.Notification) {
+                        chipState.allEvents.firstOrNull { it.id == pageEvent.id } as? IslandEvent.Notification
+                            ?: return@SwipePageTransition
+                    } else pageEvent
                     val rawAccent = chipAccentColorFor(event)
                     val accent by animateColorAsState(
                         rawAccent,
@@ -410,7 +520,7 @@ internal fun IndependentNowBarKeyguardChip(
                             chipState.allEvents, nowBarStyle.enabled, musicPillEnabled,
                         ) {
                             if (nowBarStyle.enabled || musicPillEnabled)
-                                chipState.eventCount
+                                if (nowBarStyle.enabled) chipState.allEvents.size else chipState.eventCount
                             else chipState.allEvents.count { it !is IslandEvent.Media }
                         }
                         CompositionLocalProvider(
@@ -438,6 +548,7 @@ internal fun IndependentNowBarKeyguardChip(
                                 contentColor = contentColor,
                                 progress = progress,
                                 eventCount = keyguardEventCount,
+                                notificationCount = chipState.allEvents.count { it is IslandEvent.Notification },
                                 selectedEventIndex = chipState.pinnedIndex,
                                 viewModel = viewModel,
                                 nowBarStyle = nowBarStyle.takeIf { it.enabled },
@@ -470,6 +581,7 @@ private fun KeyguardChipBody(
     contentColor: Color,
     progress: Float?,
     eventCount: Int,
+    notificationCount: Int,
     selectedEventIndex: Int,
     viewModel: AxDynamicBarChipViewModel,
     nowBarStyle: AxLockscreenNowBarSettings? = null,
@@ -485,9 +597,18 @@ private fun KeyguardChipBody(
     val pressInteractionSource = remember { MutableInteractionSource() }
     val isPillPressed by pressInteractionSource.collectIsPressedAsState()
     val onPillClick: () -> Unit = {
-        when (event) {
-            is IslandEvent.Notification ->
-                viewModel.launchNotificationFromKeyguard(event)
+        if (nowBarStyle != null && viewModel.colorOsController.isRevealed.value) {
+            // Ignore taps on the outgoing pill during the notification reveal.
+        } else if (nowBarStyle?.colorOsSwipeUp != true &&
+            viewModel.colorOsController.shouldUseColorOsRevealFor(event)
+        ) {
+            popupAnchor.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            viewModel.colorOsController.toggleReveal()
+        } else when (event) {
+            is IslandEvent.Notification -> {
+                if (nowBarStyle?.colorOsSwipeUp == true) viewModel.keyguardExpansion.toggle()
+                else viewModel.launchNotificationFromKeyguard(event)
+            }
             is IslandEvent.AospChip ->
                 viewModel.handleAospChipTap(event, aospChipExpandable)
             is IslandEvent.KeyguardIndication, is IslandEvent.AppSwitch -> Unit
@@ -598,7 +719,7 @@ private fun KeyguardChipBody(
         if (!isDozing && (nowBarStyle == null || nowBarStyle.material == 1)) {
             Box(modifier = Modifier.matchParentSize()) {
                 AndroidView(
-                    factory = { ctx -> MusicPillBlurHost(ctx) },
+                    factory = { ctx -> NowBarMusicPillBlurHost(ctx) },
                     modifier = Modifier.fillMaxSize().clip(styledShape),
                 )
             }
@@ -854,6 +975,61 @@ private fun KeyguardChipBody(
                             }
                         }
                     }
+                } else if (event is IslandEvent.Notification) {
+                    // Match the notification pill's avatar and app badge while adapting to Now Bar dimensions.
+                    val iconSize = (styledHeight.value * 0.62f).coerceIn(24f, 44f).dp
+                    Box(modifier = Modifier.size(iconSize), contentAlignment = Alignment.Center) {
+                        KeyguardNotificationPillIcon(event, accent, styledContentColor, iconSize)
+                        if (notificationCount > 1) {
+                            val countSize = (iconSize.value * 0.40f).coerceIn(12f, 16f).dp
+                            Box(
+                                modifier = Modifier.align(Alignment.TopStart)
+                                    .height(countSize).widthIn(min = countSize)
+                                    .background(RedAccent, CircleShape)
+                                    .border(1.dp, styledContentColor.copy(alpha = 0.45f), CircleShape)
+                                    .padding(horizontal = 2.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = if (notificationCount > 99) "99+" else notificationCount.toString(),
+                                    color = chipContentColorOn(RedAccent),
+                                    style = TsBadge.copy(fontSize = 9.sp),
+                                    lineHeight = 9.sp, maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(SpaceXs))
+                    val fallbackName = stringResource(R.string.ax_dynamic_bar_notification)
+                    val appName = event.appName.ifBlank { fallbackName }
+                    val primary = if (event.isRedacted) appName else
+                        event.senderName?.takeIf { event.isConversation && it.isNotBlank() }
+                            ?: event.title?.takeIf { it.isNotBlank() } ?: appName
+                    val summary = if (event.isRedacted) stringResource(R.string.ax_dynamic_bar_sensitive_content)
+                        else event.text?.takeIf { it.isNotBlank() }?.takeIfDistinctFrom(primary)
+                            ?: event.title?.takeIf { it.isNotBlank() }?.takeIfDistinctFrom(primary)
+                    val titleSp = (LocalNowBarTextFontSp.current ?: 13f).coerceIn(11f, 17f)
+                    val showSummary = nowBarStyle?.text != 2 && !summary.isNullOrBlank()
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                        Text(
+                            if (nowBarStyle?.text == 0 && showSummary) "$primary · $summary" else primary,
+                            color = styledContentColor,
+                            style = PillPrimary.copy(fontSize = titleSp.sp, lineHeight = (titleSp + 2f).sp),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (marqueeEnabled && !event.isRedacted) Modifier.basicMarquee(iterations = 1) else Modifier
+                            ),
+                        )
+                        if (showSummary && nowBarStyle?.text != 0) {
+                            val detailSp = (titleSp - 1f).coerceAtLeast(10f)
+                            Text(
+                                summary.orEmpty(), color = styledContentColor.copy(alpha = AlphaSecondary),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = detailSp.sp, lineHeight = (detailSp + 2f).sp),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
                     SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
                     Spacer(Modifier.width(SpaceXs))
@@ -948,7 +1124,7 @@ private fun KeyguardChipBody(
                     }
                 }
 
-                if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
+                if (event !is IslandEvent.Media && event !is IslandEvent.Charging && event !is IslandEvent.Notification) {
                     val actionsCtx = LocalContext.current
                     val actions = actionsFor(event, actionsCtx)
                     if (actions.isNotEmpty()) {
@@ -1033,7 +1209,7 @@ private fun NowBarIdleBatteryChip(info: IslandEvent.Charging) {
     Box(contentAlignment = Alignment.Center) {
         Box(modifier = Modifier.matchParentSize().clip(ChipShape)) {
             AndroidView(
-                factory = { ctx -> MusicPillBlurHost(ctx) },
+                factory = { ctx -> NowBarMusicPillBlurHost(ctx) },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1089,7 +1265,7 @@ private fun KeyguardBatteryChip(
                 .clip(ChipShape),
         ) {
             AndroidView(
-                factory = { ctx -> MusicPillBlurHost(ctx) },
+                factory = { ctx -> NowBarMusicPillBlurHost(ctx) },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1377,7 +1553,10 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
             else MarqueeText(event.label.ifEmpty { stringResource(R.string.ax_dynamic_bar_timer) }, color, modifier)
         }
         is IslandEvent.Stopwatch -> StopwatchTimeText(event, color, modifier)
-        is IslandEvent.Notification -> MarqueeText(event.title ?: event.appName, color, modifier)
+        is IslandEvent.Notification -> MarqueeText(
+            if (event.isRedacted) event.appName else event.title ?: event.appName,
+            color, modifier,
+        )
         is IslandEvent.Charging -> {
             val parts = rememberChargingParts(batteryString)
             if (parts.size >= 2) {
@@ -1540,7 +1719,7 @@ private fun secondaryTextFor(event: IslandEvent): String? = when (event) {
     is IslandEvent.Call -> event.callerName
     is IslandEvent.BiometricUnlock -> event.sourceName
     is IslandEvent.Notification ->
-        event.text
+        event.text?.takeUnless { event.isRedacted }
             ?.takeIf { it.isNotBlank() }
             ?.takeIfDistinctFrom(event.title, event.appName)
             ?.take(30)
@@ -1620,20 +1799,20 @@ private fun SportsChipTeamBadge(
     }
 }
 
-private enum class ActionIcon { PLAY, PAUSE, STOP, SKIP_PREV, SKIP_NEXT }
+private enum class NowBarActionIcon { PLAY, PAUSE, STOP, SKIP_PREV, SKIP_NEXT }
 
-private data class ChipAction(
-    val icon: ActionIcon,
+private data class NowBarChipAction(
+    val icon: NowBarActionIcon,
     val perform: (AxDynamicBarChipViewModel, IslandEvent, Context) -> Unit,
 )
 
-private fun actionsFor(event: IslandEvent, context: Context): List<ChipAction> = when (event) {
+private fun actionsFor(event: IslandEvent, context: Context): List<NowBarChipAction> = when (event) {
     is IslandEvent.Media -> listOf(
-        ChipAction(ActionIcon.SKIP_PREV) { vm, _, _ -> vm.skipPrev() },
-        ChipAction(if (event.isPlaying) ActionIcon.PAUSE else ActionIcon.PLAY) { vm, _, _ ->
+        NowBarChipAction(NowBarActionIcon.SKIP_PREV) { vm, _, _ -> vm.skipPrev() },
+        NowBarChipAction(if (event.isPlaying) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY) { vm, _, _ ->
             vm.togglePlayPause()
         },
-        ChipAction(ActionIcon.SKIP_NEXT) { vm, _, _ -> vm.skipNext() },
+        NowBarChipAction(NowBarActionIcon.SKIP_NEXT) { vm, _, _ -> vm.skipNext() },
     )
     is IslandEvent.AudioRecording -> {
         val classified = event.actions.map { it to it.action.classify(context, it.action.actionIntent?.creatorPackage ?: context.packageName) }
@@ -1641,12 +1820,12 @@ private fun actionsFor(event: IslandEvent, context: Context): List<ChipAction> =
         val stop = classified.firstOrNull { (_, k) -> k == NotificationActionType.STOP || k == NotificationActionType.DELETE }?.first
         listOfNotNull(
             pauseResume?.let { action ->
-                ChipAction(
-                    if (event.state == RecordingState.RECORDING) ActionIcon.PAUSE else ActionIcon.PLAY,
+                NowBarChipAction(
+                    if (event.state == RecordingState.RECORDING) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
             stop?.let { action ->
-                ChipAction(ActionIcon.STOP) { _, _, ctx ->
+                NowBarChipAction(NowBarActionIcon.STOP) { _, _, ctx ->
                     action.action.actionIntent?.sendWithBal(ctx)
                 }
             },
@@ -1656,8 +1835,8 @@ private fun actionsFor(event: IslandEvent, context: Context): List<ChipAction> =
         val toggleAction = event.actions.firstOrNull()
         listOfNotNull(
             toggleAction?.let { action ->
-                ChipAction(
-                    if (event.isPaused) ActionIcon.PLAY else ActionIcon.PAUSE,
+                NowBarChipAction(
+                    if (event.isPaused) NowBarActionIcon.PLAY else NowBarActionIcon.PAUSE,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
         )
@@ -1666,21 +1845,21 @@ private fun actionsFor(event: IslandEvent, context: Context): List<ChipAction> =
         val toggleAction = event.actions.firstOrNull()
         listOfNotNull(
             toggleAction?.let { action ->
-                ChipAction(
-                    if (event.isRunning) ActionIcon.PAUSE else ActionIcon.PLAY,
+                NowBarChipAction(
+                    if (event.isRunning) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
         )
     }
     is IslandEvent.Torch -> listOf(
-        ChipAction(ActionIcon.STOP) { vm, event, _ -> vm.dismissEvent(event) },
+        NowBarChipAction(NowBarActionIcon.STOP) { vm, event, _ -> vm.dismissEvent(event) },
     )
     else -> emptyList()
 }
 
 @Composable
 private fun ActionButton(
-    icon: ActionIcon,
+    icon: NowBarActionIcon,
     color: Color,
     bgColor: Color,
     onClick: () -> Unit,
@@ -1688,11 +1867,11 @@ private fun ActionButton(
     iconSize: Dp = ActionIconSize,
 ) {
     val imageVector = when (icon) {
-        ActionIcon.PLAY -> Icons.Filled.PlayArrow
-        ActionIcon.PAUSE -> Icons.Filled.Pause
-        ActionIcon.STOP -> Icons.Filled.Stop
-        ActionIcon.SKIP_PREV -> Icons.Filled.SkipPrevious
-        ActionIcon.SKIP_NEXT -> Icons.Filled.SkipNext
+        NowBarActionIcon.PLAY -> Icons.Filled.PlayArrow
+        NowBarActionIcon.PAUSE -> Icons.Filled.Pause
+        NowBarActionIcon.STOP -> Icons.Filled.Stop
+        NowBarActionIcon.SKIP_PREV -> Icons.Filled.SkipPrevious
+        NowBarActionIcon.SKIP_NEXT -> Icons.Filled.SkipNext
     }
     Surface(
         onClick = onClick,
