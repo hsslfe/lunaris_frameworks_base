@@ -80,7 +80,8 @@ constructor(
             constrainWidth(overlayId, ConstraintSet.MATCH_CONSTRAINT)
             constrainHeight(overlayId, ConstraintSet.MATCH_CONSTRAINT)
             setVisibilityMode(overlayId, ConstraintSet.VISIBILITY_MODE_IGNORE)
-            setElevation(overlayId, 2f)
+            // Keep the freeform widgets above the inline widgets but below the depth subject.
+            setElevation(overlayId, 1.25f)
             // Info widgets positioning - below WEATHER (3rd in hierarchy)
             connect(R.id.keyguard_info_widgets, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
             connect(R.id.keyguard_info_widgets, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
