@@ -129,6 +129,13 @@ public class WallpaperDepthUtils {
     private int mOffsetX;
     private int mOffsetY;
     private boolean mUnlocking;
+    private boolean mGoingToSleep;
+    private boolean mHoldSleepDepth;
+    private boolean mUnlockFadeRunning;
+    private int mVisibilityGeneration;
+    private final Runnable mSleepDepthFallback = () -> {
+        if (mGoingToSleep) finishSleepDepth();
+    };
 
     private int mBottomFadeDp = DEFAULT_BOTTOM_FADE_DP;
     private int mFadeCurvePercent = DEFAULT_FADE_CURVE_PERCENT;
@@ -294,12 +301,67 @@ public class WallpaperDepthUtils {
         return instance;
     }
 
+    public void onStartedGoingToSleep() {
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        mGoingToSleep = true;
+        // Retain only an already visible spatial subject. Never introduce a new
+        // depth layer on top of an app, bouncer, or the ambient lockscreen.
+        mHoldSleepDepth = mSpatialEffectEnabled && canShowDepthWallpaper()
+                && mLockScreenSubject.getVisibility() == View.VISIBLE
+                && mLockScreenSubject.getParent() == mKeyguardSubjectContainer;
+        if (mHoldSleepDepth) {
+            mSpatialEffectController.setSleepPaused(true);
+        } else {
+            updateSpatialEffectActive();
+            mSpatialEffectController.setSleepPaused(false);
+        }
+    }
+
+    public void onFinishedGoingToSleep() {
+        // Some AOD transitions never report a separate physical screen-off event.
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        if (mGoingToSleep && mHoldSleepDepth) {
+            mMainHandler.postDelayed(mSleepDepthFallback, 300L);
+        }
+    }
+
+    public void onScreenTurnedOff() {
+        if (mGoingToSleep) finishSleepDepth();
+    }
+
+    private void finishSleepDepth() {
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        if (!mHoldSleepDepth) return;
+        mHoldSleepDepth = false;
+        // Stop sensing before releasing the pause; the screen is now covered/off.
+        mSpatialEffectController.setActive(false, false);
+        mSpatialEffectController.setSleepPaused(false);
+        updateDepthWallpaperVisibility();
+    }
+
+    public void onStartedWakingUp() {
+        mGoingToSleep = false;
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        // If wake interrupted the screen-off animation, retain the same layer
+        // until the awake keyguard is eligible again.
+        updateDepthWallpaperVisibility();
+    }
+
+    public void onFinishedWakingUp() {
+        if (!mGoingToSleep) {
+            mHoldSleepDepth = false;
+            updateDepthWallpaperVisibility();
+        }
+    }
+
     public void onUnlockStarted() {
         if (mUnlocking) {
             return;
         }
         mUnlocking = true;
+        mHoldSleepDepth = false;
         hideDepthWallpaperImmediate();
+        mSpatialEffectController.setSleepPaused(false);
         updateSpatialEffectActive();
     }
 
@@ -308,10 +370,7 @@ public class WallpaperDepthUtils {
             return;
         }
         mUnlocking = false;
-        mLockScreenSubject.animate().cancel();
-        mLockScreenSubject.setAlpha(1f);
-        mLockScreenBackground.animate().cancel();
-        mLockScreenBackground.setAlpha(1f);
+        cancelUnlockFade();
         updateDepthWallpaperVisibility();
         updateSpatialEffectActive();
     }
@@ -510,14 +569,14 @@ public class WallpaperDepthUtils {
     public void setKeyguardRoot(KeyguardRootView root) {
         mKeyguardRoot = root;
         mKeyguardSubjectContainer = root.findViewById(R.id.keyguard_depth_wallpaper_subject);
+        updateDepthWallpaperVisibility();
     }
 
     public void setSubjectBehindShade(boolean behindShade) {
         float translationZ = behindShade ? -100f : 0f;
         if (mSubjectContainer.getTranslationZ() != translationZ) {
             mSubjectContainer.setTranslationZ(translationZ);
-            mSubjectContainer.post(() -> placeSubject(
-                    mLockScreenSubject.getVisibility() == View.VISIBLE && canShowDepthWallpaper()));
+            updateDepthWallpaperVisibility();
         }
     }
 
@@ -526,8 +585,11 @@ public class WallpaperDepthUtils {
                 && mSubjectContainer.getTranslationZ() == 0f;
         FrameLayout target = inKeyguard ? mKeyguardSubjectContainer : mSubjectContainer;
         if (mLockScreenSubject.getParent() != target) {
-            ((ViewGroup) mLockScreenSubject.getParent()).removeView(mLockScreenSubject);
+            if (mLockScreenSubject.getParent() instanceof ViewGroup) {
+                ((ViewGroup) mLockScreenSubject.getParent()).removeView(mLockScreenSubject);
+            }
             target.addView(mLockScreenSubject);
+            applyWallpaperZoom();
         }
         if (mKeyguardRoot != null) {
             mKeyguardRoot.setDepthWallpaperOverClock(inKeyguard);
@@ -632,43 +694,82 @@ public class WallpaperDepthUtils {
                 && (currentState == ScrimState.AOD || currentState == ScrimState.PULSING);
     }
 
+    private boolean canHoldSleepDepth() {
+        ScrimState state = mScrimController.getState();
+        return mHoldSleepDepth && mSpatialEffectEnabled && canShowWallpaperLayers()
+                && !mDynamicBarExpanded && mSubjectContainer.getTranslationZ() == 0f
+                && (state == ScrimState.KEYGUARD || state == ScrimState.AOD || state == ScrimState.OFF);
+    }
+
     public void updateDepthWallpaperVisibility() {
-        if (mLockScreenSubject == null) {
+        if (mLockScreenSubject == null) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mMainHandler.post(this::updateDepthWallpaperVisibility);
             return;
         }
+        // Resolve visibility and layer ownership together before the next frame.
+        // Coalesce layout-time callbacks rather than reparenting inside a layout pass.
+        mMainHandler.removeCallbacks(mApplyVisibility);
+        if (mSubjectContainer.isInLayout() || (mKeyguardRoot != null && mKeyguardRoot.isInLayout())) {
+            mMainHandler.post(mApplyVisibility);
+        } else {
+            mApplyVisibility.run();
+        }
+    }
 
-        mSubjectContainer.post(() -> {
-            ViewGroup parent = (ViewGroup) mSubjectContainer.getParent();
-            if (parent != null && mLockScreenBackground.getParent() == null) {
-                parent.addView(mLockScreenBackground, 0);
+    private final Runnable mApplyVisibility = this::applyDepthWallpaperVisibility;
+
+    private void applyDepthWallpaperVisibility() {
+        if (!mSubjectContainer.isAttachedToWindow()) return;
+        ViewGroup parent = (ViewGroup) mSubjectContainer.getParent();
+        if (parent != null && mLockScreenBackground.getParent() == null) {
+            parent.addView(mLockScreenBackground, 0);
+        }
+        boolean awakeDepth = canShowDepthWallpaper();
+        if (mHoldSleepDepth && (!canHoldSleepDepth() || (!mGoingToSleep && awakeDepth))) {
+            mHoldSleepDepth = false;
+        }
+        boolean heldDepth = canHoldSleepDepth();
+        boolean showDepth = awakeDepth || heldDepth;
+        boolean showAmbient = !heldDepth && canShowAmbientWallpaper();
+        if (mUnlockFadeRunning) {
+            if ((showDepth || showAmbient) && !mUnlocking && ScrimUtils.get().isKeyguardShowing()) {
+                cancelUnlockFade();
+            } else if (mUnlocking || !ScrimUtils.get().isKeyguardShowing()) {
+                updateSpatialEffectActive();
+                return;
             }
-            boolean showDepth = canShowDepthWallpaper();
-            boolean showAmbient = canShowAmbientWallpaper();
+        }
+        // Hidden layers need not move behind the clock. Reparent only when
+        // a visible layer actually needs a different host (AOD or shade).
+        if (showDepth || showAmbient || mSubjectContainer.getTranslationZ() != 0f) {
             placeSubject(showDepth);
-            if (mShowingAmbientWallpaper != showAmbient) {
-                if (showAmbient) {
-                    mLockScreenSubject.setAlpha(1f);
-                }
-                mLockScreenSubject.invalidate();
+        } else if (mKeyguardRoot != null) {
+            mKeyguardRoot.setDepthWallpaperOverClock(false);
+        }
+        if (mShowingAmbientWallpaper != showAmbient) {
+            if (showAmbient) {
+                mLockScreenSubject.setAlpha(1f);
             }
-            mShowingAmbientWallpaper = showAmbient;
-            float blurRadius = showAmbient ? mAmbientWallpaperBlurRadius : 0f;
-            if (Float.compare(mAppliedAmbientBlurRadius, blurRadius) != 0) {
-                RenderEffect blurEffect = blurRadius > 0f
-                        ? RenderEffect.createBlurEffect(
-                                blurRadius, blurRadius, Shader.TileMode.CLAMP)
-                        : null;
-                mLockScreenBackground.setRenderEffect(blurEffect);
-                mLockScreenSubject.setRenderEffect(blurEffect);
-                mAppliedAmbientBlurRadius = blurRadius;
-            }
-            mLockScreenSubject.setVisibility(
-                    !mDynamicBarExpanded && (showDepth || showAmbient) ? View.VISIBLE : View.GONE);
-            mLockScreenBackground.setVisibility(
-                    showDepth || showAmbient ? View.VISIBLE : View.GONE);
-        });
-
+            mLockScreenSubject.invalidate();
+        }
+        mShowingAmbientWallpaper = showAmbient;
+        float blurRadius = showAmbient ? mAmbientWallpaperBlurRadius : 0f;
+        if (Float.compare(mAppliedAmbientBlurRadius, blurRadius) != 0) {
+            RenderEffect blurEffect = blurRadius > 0f
+                    ? RenderEffect.createBlurEffect(
+                            blurRadius, blurRadius, Shader.TileMode.CLAMP)
+                    : null;
+            mLockScreenBackground.setRenderEffect(blurEffect);
+            mLockScreenSubject.setRenderEffect(blurEffect);
+            mAppliedAmbientBlurRadius = blurRadius;
+        }
+        mLockScreenSubject.setVisibility(
+                !mDynamicBarExpanded && (showDepth || showAmbient) ? View.VISIBLE : View.GONE);
+        mLockScreenBackground.setVisibility(
+                showDepth || showAmbient ? View.VISIBLE : View.GONE);
         updateSpatialEffectActive();
+        if (!mHoldSleepDepth) mSpatialEffectController.setSleepPaused(false);
     }
 
     public void hideDepthWallpaper() {
@@ -678,16 +779,9 @@ public class WallpaperDepthUtils {
             return;
         }
 
-        mLockScreenSubject.post(() -> {
-            mLockScreenSubject.setVisibility(View.GONE);
-            placeSubject(false);
-
-            if (mLockScreenBackground != null) {
-                mLockScreenBackground.setVisibility(View.GONE);
-            }
-        });
-
-        updateSpatialEffectActive();
+        // Bouncer/hub visibility is already reflected in the current state.
+        // Do not enqueue an unconditional hide that can outlive a rapid relock.
+        updateDepthWallpaperVisibility();
     }
 
     public void hideDepthWallpaperImmediate() {
@@ -696,6 +790,11 @@ public class WallpaperDepthUtils {
         }
 
         Runnable fade = () -> {
+            // A transient keyguard visibility callback during a lock transition
+            // must not start an unlock fade on the held subject.
+            if (canHoldSleepDepth() && !mUnlocking) return;
+            final int generation = ++mVisibilityGeneration;
+            mUnlockFadeRunning = true;
             mLockScreenSubject.animate().cancel();
 
             if (mLockScreenBackground != null) {
@@ -706,8 +805,10 @@ public class WallpaperDepthUtils {
                     .alpha(0f)
                     .setDuration(120)
                     .withEndAction(() -> {
+                        if (generation != mVisibilityGeneration) return;
+                        mUnlockFadeRunning = false;
                         mLockScreenSubject.setVisibility(View.GONE);
-                        placeSubject(false);
+                        if (mKeyguardRoot != null) mKeyguardRoot.setDepthWallpaperOverClock(false);
                         mLockScreenSubject.setAlpha(1f);
 
                         if (mLockScreenBackground != null) {
@@ -733,12 +834,22 @@ public class WallpaperDepthUtils {
         updateSpatialEffectActive();
     }
 
+    private void cancelUnlockFade() {
+        ++mVisibilityGeneration;
+        mUnlockFadeRunning = false;
+        mLockScreenSubject.animate().cancel();
+        mLockScreenBackground.animate().cancel();
+        mLockScreenSubject.setAlpha(1f);
+        mLockScreenBackground.setAlpha(1f);
+    }
+
     private void updateSpatialEffectActive() {
         if (mSpatialEffectController == null) {
             return;
         }
 
-        boolean active = mSpatialEffectEnabled && canShowDepthWallpaper();
+        if (canHoldSleepDepth()) return;
+        boolean active = mSpatialEffectEnabled && canShowDepthWallpaper() && !mGoingToSleep;
         boolean animate = !mDozing && !mBouncerShowing && !mGlanceableHubShowing
                 && !mDynamicBarExpanded && mScrimController.getState() == ScrimState.KEYGUARD
                 && mContext.getResources().getConfiguration().orientation
@@ -807,6 +918,11 @@ public class WallpaperDepthUtils {
             mLoadWallpaperTask.cancel(false);
             mLoadWallpaperTask = null;
         }
+        mHoldSleepDepth = false;
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        mSpatialEffectController.setActive(false, false);
+        mSpatialEffectController.setSleepPaused(false);
+        cancelUnlockFade();
         mWallpaperLoaded = false;
         mLoadedBounds = null;
         mLoadedSubjectPath = null;
@@ -1073,6 +1189,9 @@ public class WallpaperDepthUtils {
     }
 
     public void onDetachedFromWindow() {
+        mGoingToSleep = mHoldSleepDepth = false;
+        mMainHandler.removeCallbacks(mSleepDepthFallback);
+        mMainHandler.removeCallbacks(mApplyVisibility);
         if (mLightRevealScrim != null) {
             mLightRevealScrim.setRevealChangedListener(null);
             mLightRevealScrim = null;
