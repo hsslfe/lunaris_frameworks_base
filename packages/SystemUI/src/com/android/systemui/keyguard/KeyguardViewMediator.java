@@ -49,6 +49,7 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
+import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
 import android.app.AlarmManager;
 import android.app.BroadcastOptions;
@@ -440,6 +441,8 @@ public class KeyguardViewMediator implements CoreStartable,
 
     // true if the keyguard is hidden by another window
     private boolean mOccluded = false;
+    private final java.util.concurrent.atomic.AtomicInteger mLockStylesHandoffGeneration =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * Whether the {@link #mOccludeAnimationController} is currently playing the occlusion
@@ -2423,6 +2426,10 @@ public class KeyguardViewMediator implements CoreStartable,
     private void handleSetOccluded(boolean isOccluded, boolean animate) {
         Trace.beginSection("KeyguardViewMediator#handleSetOccluded");
         Log.d(TAG, "handleSetOccluded(" + isOccluded + ")");
+        if (!isOccluded) {
+            mLockStylesHandoffGeneration.incrementAndGet();
+            mKeyguardInteractor.endLockStylesOcclusion();
+        }
         EventLogTags.writeSysuiKeyguard(isOccluded ? 1 : 0, animate ? 1 : 0);
 
         mInteractionJankMonitor.cancel(CUJ_LOCKSCREEN_TRANSITION_FROM_AOD);
@@ -4493,6 +4500,71 @@ public class KeyguardViewMediator implements CoreStartable,
         }
     }
 
+    /**
+     * LockStyles owns its lockscreen-to-card animation. Do not run the keyguard
+     * launch animator on top of it or reset its surface at the end of that animation.
+     * Only an opaque gallery task opening by itself is eligible.
+     */
+    boolean finishLockStylesOcclusion(TransitionInfo info, Transaction t,
+            IRemoteTransitionFinishedCallback finishCallback) throws RemoteException {
+        ActivityManager.RunningTaskInfo galleryTask = null;
+        for (TransitionInfo.Change change : info.getChanges()) {
+            if (change.getMode() != WindowManager.TRANSIT_OPEN
+                    && change.getMode() != WindowManager.TRANSIT_TO_FRONT) {
+                continue;
+            }
+            final ActivityManager.RunningTaskInfo task = change.getTaskInfo();
+            if (task == null) continue;
+            final ComponentName activity = task.topActivity;
+            if (activity == null
+                    || !"org.lunaris.lockstyles".equals(activity.getPackageName())
+                    || !"org.lunaris.lockstyles.ui.LockScreenGalleryActivity".equals(
+                            activity.getClassName())
+                    || (change.getFlags() & TransitionInfo.FLAG_TRANSLUCENT) != 0) {
+                return false;
+            }
+            galleryTask = task;
+        }
+        if (galleryTask == null) return false;
+
+        // Reveal the opaque gallery surface for the keyguard handoff.
+        final ActivityManager.RunningTaskInfo taskToOcclude = galleryTask;
+        for (TransitionInfo.Change change : info.getChanges()) {
+            if (change.getMode() == WindowManager.TRANSIT_OPEN
+                    || change.getMode() == WindowManager.TRANSIT_TO_FRONT) {
+                if (change.getTaskInfo() != null
+                        && change.getTaskInfo().taskId == galleryTask.taskId) {
+                    t.show(change.getLeash());
+                    t.setAlpha(change.getLeash(), 1f);
+                }
+            }
+        }
+        // Suppress duplicate keyguard content only once the gallery transaction has
+        // committed. Keep WM completion synchronous; a delayed callback must never
+        // retain the remote transition or revive an aborted gallery handoff.
+        final int generation = mLockStylesHandoffGeneration.incrementAndGet();
+        t.addTransactionCommittedListener(mContext.getMainExecutor(), () -> {
+            if (mLockStylesHandoffGeneration.get() == generation) {
+                mKeyguardInteractor.beginLockStylesOcclusion();
+            }
+        });
+        t.apply();
+        if (KeyguardWmStateRefactor.isEnabled()) {
+            mWmOcclusionManager.getKeyguardOcclusionInteractor()
+                    .setWmNotifiedShowWhenLockedActivityOnTop(true, taskToOcclude);
+        } else {
+            setOccluded(true, false);
+        }
+        finishCallback.onTransitionFinished(null, null);
+        return true;
+    }
+
+    /** Release the gallery handoff on explicit WM unocclusion, including aborted launches. */
+    void endLockStylesOcclusion() {
+        mLockStylesHandoffGeneration.incrementAndGet();
+        mHandler.post(mKeyguardInteractor::endLockStylesOcclusion);
+    }
+
     private IRemoteTransition validatingRemoteTransition(IRemoteTransition delegate) {
         return new RemoteTransitionStub() {
             @Override
@@ -4502,6 +4574,8 @@ public class KeyguardViewMediator implements CoreStartable,
                     Log.w(TAG, "Skipping remote transition - view root not ready");
                     return;
                 }
+
+                if (finishLockStylesOcclusion(info, t, finishCallback)) return;
 
                 delegate.startAnimation(token, info, t, finishCallback);
             }
