@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.view.HapticFeedbackConstants
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -380,11 +381,9 @@ internal fun IndependentNowBarKeyguardChip(
         var swipeLandingPage by remember { mutableStateOf<Any?>(null) }
         val swipeLandingScaleX = remember { Animatable(1f) }
         val swipeLandingScaleY = remember { Animatable(1f) }
-        val swipeLandingOffsetY = remember { Animatable(0f) }
         LaunchedEffect(swipeLandingPage, isKeyguardChipVisible, isKeyguardColorOsRevealed, isDozing, isBouncerShowing) {
             swipeLandingScaleX.snapTo(1f)
             swipeLandingScaleY.snapTo(1f)
-            swipeLandingOffsetY.snapTo(0f)
             if (!isKeyguardChipVisible || isKeyguardColorOsRevealed || isDozing || isBouncerShowing) {
                 swipe.clearLanding()
                 swipeLandingPage = null
@@ -392,12 +391,12 @@ internal fun IndependentNowBarKeyguardChip(
             }
             if (swipeLandingPage == null) return@LaunchedEffect
 
-            // Match the collapse impact without modifying the card's existing
+            // Compress around the pill center without changing its position,
             // horizontal travel, drag spring, or fade timing.
             coroutineScope {
                 launch {
                     swipeLandingScaleX.animateTo(
-                        1.09f, tween(75, easing = FastOutSlowInEasing),
+                        0.92f, tween(75, easing = FastOutSlowInEasing),
                     )
                     swipeLandingScaleX.animateTo(
                         1f, spring(dampingRatio = 0.44f, stiffness = 420f),
@@ -405,18 +404,10 @@ internal fun IndependentNowBarKeyguardChip(
                 }
                 launch {
                     swipeLandingScaleY.animateTo(
-                        0.87f, tween(75, easing = FastOutSlowInEasing),
+                        0.88f, tween(75, easing = FastOutSlowInEasing),
                     )
                     swipeLandingScaleY.animateTo(
                         1f, spring(dampingRatio = 0.44f, stiffness = 420f),
-                    )
-                }
-                launch {
-                    swipeLandingOffsetY.animateTo(
-                        3f, tween(75, easing = FastOutSlowInEasing),
-                    )
-                    swipeLandingOffsetY.animateTo(
-                        0f, spring(dampingRatio = 0.46f, stiffness = 400f),
                     )
                 }
             }
@@ -514,9 +505,9 @@ internal fun IndependentNowBarKeyguardChip(
                     }
                 }
                 .graphicsLayer {
+                    transformOrigin = TransformOrigin.Center
                     scaleX = swipeLandingScaleX.value
                     scaleY = swipeLandingScaleY.value
-                    translationY = swipeLandingOffsetY.value.dp.toPx()
                 }
                 .pillSwipeMotion(swipe),
         ) {
