@@ -1871,6 +1871,11 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
     }
 
     protected void dismissH(int reason) {
+        if (reason == Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED
+                && !mShowing && (mDialog == null || !mDialog.isShowing())) {
+            mHandler.removeMessages(H.SHOW);
+            return;
+        }
         Trace.beginSection("VolumeDialogImpl#dismissH");
         for (int i = 0; i < mRows.size(); i++) {
             mRows.get(i).removeHaptics();
@@ -1935,7 +1940,8 @@ public class VolumeDialogImpl implements VolumeDialog, Dumpable,
 
         checkODICaptionsTooltip(true);
         synchronized (mSafetyWarningLock) {
-            if (mSafetyWarning != null) {
+            if (mSafetyWarning != null
+                    && reason != Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED) {
                 if (D.BUG) Log.d(TAG, "SafetyWarning dismissed");
                 mSafetyWarning.dismiss();
             }

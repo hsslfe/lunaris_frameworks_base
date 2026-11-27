@@ -56,6 +56,7 @@ import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.kosmos.Kosmos;
 import com.android.systemui.plugins.VolumeDialogController;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.util.RingerModeLiveData;
 import com.android.systemui.util.RingerModeTracker;
@@ -69,6 +70,8 @@ import com.android.systemui.volume.domain.interactor.FakeAudioSharingInteractor;
 import com.android.systemui.volume.shared.VolumeLogger;
 
 import kotlinx.coroutines.test.TestScope;
+import kotlinx.coroutines.flow.MutableStateFlow;
+import kotlinx.coroutines.flow.StateFlowKt;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -192,6 +195,26 @@ public class VolumeDialogControllerImplTest extends SysuiTestCase {
         when(mWakefullnessLifcycle.getWakefulness()).thenReturn(
                 WakefulnessLifecycle.WAKEFULNESS_AWAKE);
         mVolumeController.onVolumeChangedW(0, AudioManager.FLAG_SHOW_UI, true);
+        verify(mCallback, times(1)).onShowRequested(Events.SHOW_REASON_VOLUME_CHANGED, false,
+                LOCK_TASK_MODE_NONE);
+    }
+
+    @Test
+    public void testVolumeChangeW_qsExpandedSuppressesShowUntilClosed() {
+        MutableStateFlow<Boolean> qsExpanded = StateFlowKt.MutableStateFlow(true);
+        mVolumeController.observeQsExpansion(qsExpanded);
+        mVolumeController.setDeviceInteractive(true);
+        when(mWakefullnessLifcycle.getWakefulness()).thenReturn(
+                WakefulnessLifecycle.WAKEFULNESS_AWAKE);
+
+        mVolumeController.onVolumeChangedW(AudioManager.STREAM_MUSIC,
+                AudioManager.FLAG_SHOW_UI, true);
+        verify(mCallback, never()).onShowRequested(Events.SHOW_REASON_VOLUME_CHANGED, false,
+                LOCK_TASK_MODE_NONE);
+
+        qsExpanded.setValue(false);
+        mVolumeController.onVolumeChangedW(AudioManager.STREAM_MUSIC,
+                AudioManager.FLAG_SHOW_UI, true);
         verify(mCallback, times(1)).onShowRequested(Events.SHOW_REASON_VOLUME_CHANGED, false,
                 LOCK_TASK_MODE_NONE);
     }
@@ -368,7 +391,8 @@ public class VolumeDialogControllerImplTest extends SysuiTestCase {
                     dumpManager,
                     audioSharingInteractor,
                     javaAdapter,
-                    volumeLogger);
+                    volumeLogger,
+                    () -> mock(ShadeInteractor.class));
             mCallbacks = callback;
 
             ArgumentCaptor<WakefulnessLifecycle.Observer> observerCaptor =

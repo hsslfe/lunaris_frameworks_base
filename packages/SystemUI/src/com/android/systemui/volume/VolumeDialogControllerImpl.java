@@ -66,6 +66,7 @@ import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.plugins.VolumeDialogController;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.util.RingerModeLiveData;
 import com.android.systemui.util.RingerModeTracker;
@@ -85,6 +86,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+
+import dagger.Lazy;
+import kotlinx.coroutines.flow.StateFlow;
 
 import javax.inject.Inject;
 
@@ -153,6 +158,8 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
     private final AudioSharingInteractor mAudioSharingInteractor;
     private final JavaAdapter mJavaAdapter;
     private final VolumeLogger mVolumeLogger;
+    private final Lazy<ShadeInteractor> mShadeInteractor;
+    private volatile StateFlow<Boolean> mQsExpanded;
     private final boolean mHasVibrator;
     private boolean mShowA11yStream;
     private boolean mShowVolumeDialog;
@@ -200,7 +207,8 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
             DumpManager dumpManager,
             AudioSharingInteractor audioSharingInteractor,
             JavaAdapter javaAdapter,
-            VolumeLogger volumeLogger
+            VolumeLogger volumeLogger,
+            Lazy<ShadeInteractor> shadeInteractor
     ) {
         mContext = context.getApplicationContext();
         mPackageManager = packageManager;
@@ -214,6 +222,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         mAudioSharingInteractor = audioSharingInteractor;
         mJavaAdapter = javaAdapter;
         mVolumeLogger = volumeLogger;
+        mShadeInteractor = shadeInteractor;
         mAudio = audioManager;
         mNoMan = notificationManager;
         mObserver = new SettingObserver(mWorker);
@@ -275,6 +284,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
     }
 
     public void register() {
+        observeQsExpansion(mShadeInteractor.get().isQsExpanded());
         setVolumeController();
         setVolumePolicy(mVolumePolicy);
         try {
@@ -304,6 +314,24 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                         },
                         errorCallback,
                         errorCallback);
+    }
+
+    // StateFlow.value is safe to read from the volume worker and the UI
+    // callback handler. No polling or per-frame shade callbacks are needed.
+    void observeQsExpansion(StateFlow<Boolean> expanded) {
+        if (mQsExpanded != null) return;
+        mQsExpanded = expanded;
+        mCallbacks.setQsExpandedSupplier(this::isQsExpanded);
+        mJavaAdapter.alwaysCollectFlow(expanded, isExpanded -> {
+            if (isExpanded && isQsExpanded()) {
+                mCallbacks.onDismissRequested(Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED);
+            }
+        });
+    }
+
+    private boolean isQsExpanded() {
+        StateFlow<Boolean> expanded = mQsExpanded;
+        return expanded != null && Boolean.TRUE.equals(expanded.getValue());
     }
 
     public void setVolumePolicy(VolumePolicy policy) {
@@ -547,7 +575,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         return wakefulness != WakefulnessLifecycle.WAKEFULNESS_ASLEEP
                 && wakefulness != WakefulnessLifecycle.WAKEFULNESS_GOING_TO_SLEEP
                 && mDeviceInteractive && (flags & AudioManager.FLAG_SHOW_UI) != 0
-                && mShowVolumeDialog;
+                && mShowVolumeDialog && !isQsExpanded();
     }
 
     boolean onVolumeChangedW(int stream, int flags, boolean sendChanges) {
@@ -769,6 +797,7 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
     }
 
     private void onShowRequestedW(int reason) {
+        if (isQsExpanded()) return;
         mCallbacks.onShowRequested(reason, mKeyguardManager.isKeyguardLocked(),
                 mActivityManager.getLockTaskModeState());
     }
@@ -1003,6 +1032,11 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
 
     static class C implements Callbacks {
         private final Map<Callbacks, Handler> mCallbackMap = new ConcurrentHashMap<>();
+        private volatile BooleanSupplier mQsExpanded = () -> false;
+
+        void setQsExpandedSupplier(BooleanSupplier supplier) {
+            mQsExpanded = supplier;
+        }
 
         public void add(Callbacks callback, Handler handler) {
             if (callback == null || handler == null) throw new IllegalArgumentException();
@@ -1022,7 +1056,10 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                 entry.getValue().post(new Runnable() {
                     @Override
                     public void run() {
-                        entry.getKey().onShowRequested(reason, keyguardLocked, lockTaskModeState);
+                        // A queued volume event may reach the UI after QS opens.
+                        if (!mQsExpanded.getAsBoolean()) {
+                            entry.getKey().onShowRequested(reason, keyguardLocked, lockTaskModeState);
+                        }
                     }
                 });
             }
@@ -1034,7 +1071,10 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
                 entry.getValue().post(new Runnable() {
                     @Override
                     public void run() {
-                        entry.getKey().onDismissRequested(reason);
+                        if (reason != Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED
+                                || mQsExpanded.getAsBoolean()) {
+                            entry.getKey().onDismissRequested(reason);
+                        }
                     }
                 });
             }
