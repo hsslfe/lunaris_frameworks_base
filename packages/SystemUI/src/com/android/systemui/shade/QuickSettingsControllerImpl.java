@@ -1716,6 +1716,10 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
 
         final boolean qsVisible = qsExpansionFraction > 0;
         final boolean qsOrQqsVisible = qqsVisible || qsVisible;
+        // Keep the depth subject above keyguard content when QS is closed. Use the
+        // current clipping target rather than the visibility captured by an old animator.
+        ScrimUtils.get().setDepthWallpaperQsVisible(
+                qsOrQqsVisible && !isLockscreenQsDisabled());
 
         int bottom = calculateBottomClippingBound(top);
         int left = calculateLeftClippingBound();

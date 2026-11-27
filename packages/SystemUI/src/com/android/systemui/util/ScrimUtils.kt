@@ -73,11 +73,13 @@ class ScrimUtils private constructor(context: Context?) {
     }
 
     private var mWallpaperDepthUtils: WallpaperDepthUtils? = null
+    private var mDepthWallpaperQsVisible = false
     private var mAmbientWallpaperEnabled = false
     private var mAmbientWallpaperBlurRadius = 0f
 
     fun setWallpaperDepthUtils(utils: WallpaperDepthUtils) {
         mWallpaperDepthUtils = utils
+        applyDepthWallpaperLayer()
         utils.setAmbientWallpaperState(mAmbientWallpaperEnabled, mAmbientWallpaperBlurRadius)
         utils.onDozingChanged(isDozing())
         updateDepthWallpaperUnlockState()
@@ -237,7 +239,12 @@ class ScrimUtils private constructor(context: Context?) {
 
     fun setBarState(state: Int) {
         if (mBarState == null || mBarState != state) {
+            val enteringKeyguardFromShade = state == KEYGUARD && !mStateIsKeyguard
             mBarState = state
+            if (enteringKeyguardFromShade) {
+                // A fresh keyguard must not inherit the unlocked shade's foreground Z.
+                setDepthWallpaperQsVisible(false)
+            }
             listeners.notifyOnMain { it.onBarStateChanged(state) }
         }
         // hack 4 bug:
@@ -250,10 +257,7 @@ class ScrimUtils private constructor(context: Context?) {
     fun setQsVisible(visible: Boolean) {
         if (mQsVisible.getAndSet(visible) != visible) {
             listeners.notifyOnMain { it.onQsVisibilityChanged(visible) }
-            if (visible) {
-                mWallpaperDepthUtils?.getDepthWallpaperView()?.translationZ = -100f
-            } else if (mStateIsKeyguard) {
-                mWallpaperDepthUtils?.getDepthWallpaperView()?.translationZ = 0f
+            if (!visible && mStateIsKeyguard) {
                 mainHandler.postDelayed({
                     mWallpaperDepthUtils?.updateDepthWallpaper()
                     mWallpaperDepthUtils?.updateDepthWallpaperVisibility()
@@ -369,16 +373,25 @@ class ScrimUtils private constructor(context: Context?) {
         mWallpaperDepthUtils?.setSubjectAlpha(subjectAlpha)
     }
 
+    // Use the current QS/QQS clipping target, not the visibility captured by a running
+    // clipping animation or the expansion fraction alone (QQS can be visible at zero).
+    fun setDepthWallpaperQsVisible(visible: Boolean) {
+        mDepthWallpaperQsVisible = visible
+        applyDepthWallpaperLayer()
+    }
+
+    private fun applyDepthWallpaperLayer() {
+        val subject = mWallpaperDepthUtils?.getDepthWallpaperView() ?: return
+        val translationZ = if (mDepthWallpaperQsVisible) -100f else 0f
+        if (subject.translationZ != translationZ) {
+            subject.translationZ = translationZ
+        }
+    }
+
     fun setQsExpansion(expansion: Float) {
-        val fullyCollapsed = expansion <= 0f
-        if (fullyCollapsed) {
-            mWallpaperDepthUtils?.getDepthWallpaperView()?.translationZ = 0f
-            if (mStateIsKeyguard) {
-                mWallpaperDepthUtils?.updateDepthWallpaper()
-                mWallpaperDepthUtils?.updateDepthWallpaperVisibility()
-            }
-        } else {
-            mWallpaperDepthUtils?.getDepthWallpaperView()?.translationZ = -100f
+        if (expansion <= 0f && mStateIsKeyguard) {
+            mWallpaperDepthUtils?.updateDepthWallpaper()
+            mWallpaperDepthUtils?.updateDepthWallpaperVisibility()
         }
     }
 
