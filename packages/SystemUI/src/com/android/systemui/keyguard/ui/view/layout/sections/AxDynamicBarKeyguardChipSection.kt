@@ -83,10 +83,13 @@ constructor(
     private var expansionHandle: DisposableHandle? = null
     private var enforceAction: Runnable? = null
     private val hiddenViews = mutableSetOf<View>()
+    private var expandedExitPending = false
 
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
             View(context).apply {
+                setBackgroundColor(0x66000000)
+                alpha = 0f
                 id = dismissViewId
                 visibility = View.GONE
                 isFocusable = false
@@ -128,6 +131,8 @@ constructor(
                     scope.launch {
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
+                                expandedExitPending = false
+                                WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
                             }
@@ -177,12 +182,24 @@ constructor(
         expanded: Boolean,
         lowUdfps: Boolean,
     ) {
-        WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
+        val scrim = constraintLayout.requireViewById<View>(dismissViewId)
+        scrim.animate().cancel()
+        scrim.isClickable = expanded
+        if (expanded) {
+            expandedExitPending = true
+            WallpaperDepthUtils.get()?.setDynamicBarExpanded(true)
+            scrim.visibility = View.VISIBLE
+            scrim.animate().alpha(1f).setDuration(200L).withEndAction(null).start()
+        } else {
+            scrim.animate().alpha(0f).setDuration(200L).withEndAction {
+                if (!viewModel.isKeyguardExpanded.value) scrim.visibility = View.GONE
+            }.start()
+        }
         rebindPreDrawAction(constraintLayout, expanded)
         TransitionManager.endTransitions(constraintLayout)
-        constraintLayout.requireViewById<View>(dismissViewId).visibility =
-            if (expanded) View.VISIBLE else View.GONE
-        if (!expanded && !viewModel.keyguardExpansion.canShow.value) {
+        if (!expanded && (!expandedExitPending || !viewModel.keyguardExpansion.canShow.value)) {
+            expandedExitPending = false
+            WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
         if (expanded) {
@@ -241,10 +258,6 @@ constructor(
                     .start()
             }
         }
-        WallpaperDepthUtils.get()?.let {
-            if (visibility == View.INVISIBLE) it.hideDepthWallpaper()
-            else it.updateDepthWallpaperVisibility()
-        }
     }
 
     private fun enforceHidden(constraintLayout: ConstraintLayout) {
@@ -255,7 +268,6 @@ constructor(
                 v.visibility = View.INVISIBLE
             }
         }
-        WallpaperDepthUtils.get()?.hideDepthWallpaper()
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
@@ -405,6 +417,8 @@ constructor(
         TransitionManager.endTransitions(constraintLayout)
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
+        expandedExitPending = false
+        constraintLayout.findViewById<View>(dismissViewId)?.animate()?.cancel()
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
         MediaViewController.getOrNull()?.setExpandedMusicOpen(false)
         expansionHandle?.dispose()
