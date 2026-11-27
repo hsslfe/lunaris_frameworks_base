@@ -266,16 +266,19 @@ class AxDynamicBarSettings @Inject constructor(
             "notification" !in _disabledEventTypes.value
 
     fun isKeyguardNotificationEventsActive(): Boolean =
-        (_isKeyguardEnabled.value || isNowBarNotificationEnabled()) &&
-            statusBarStateController.state == StatusBarState.KEYGUARD &&
-            "notification" !in _keyguardDisabledEventTypes.value
+        statusBarStateController.state == StatusBarState.KEYGUARD &&
+            if (nowBarAppearance.value.enabled) {
+                isNowBarNotificationEnabled()
+            } else {
+                _isKeyguardEnabled.value && "notification" !in _keyguardDisabledEventTypes.value
+            }
 
     val isKeyguardColorOsActive: Boolean
         get() = (_isKeyguardEnabled.value || nowBarAppearance.value.enabled) &&
             _isKeyguardColorOsStyleEnabled.value
 
     fun isNowBarNotificationEnabled(): Boolean =
-        nowBarAppearance.value.enabled && "notification" !in _keyguardDisabledEventTypes.value
+        nowBarAppearance.value.let { it.enabled && it.notifications }
 
     fun shouldSuppressHeadsUp(notification: StatusBarNotification): Boolean {
         if (CallNotificationInfo.from(notification) != null) {

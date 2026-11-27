@@ -326,7 +326,7 @@ constructor(
             ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar, _), (kg, _) ->
                 raw.filter { e ->
                     if (kg && nowBar.enabled) {
-                        nowBar.shows(e) || (e is IslandEvent.Notification && settings.isNowBarNotificationEnabled())
+                        nowBar.shows(e)
                     } else if (kg && e is IslandEvent.Media) {
                         // The lock screen music pill has its own switch and event source.
                         pillEnabled
