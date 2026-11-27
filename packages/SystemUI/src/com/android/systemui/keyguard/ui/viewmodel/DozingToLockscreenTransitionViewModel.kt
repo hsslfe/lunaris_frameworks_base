@@ -63,6 +63,8 @@ constructor(
             duration = FromDozingTransitionInteractor.TO_LOCKSCREEN_DURATION,
             onStart = { startAlpha = viewState.alpha() },
             onStep = { MathUtils.lerp(startAlpha, 1f, it) },
+            // FINISHED can arrive without a final RUNNING frame.
+            onFinish = { 1f },
         )
     }
 

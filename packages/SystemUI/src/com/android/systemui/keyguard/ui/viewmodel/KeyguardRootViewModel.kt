@@ -245,7 +245,6 @@ constructor(
 
     private data class LockscreenWakeInput(
         val step: TransitionStep,
-        val startedStep: TransitionStep,
         val awake: Boolean,
         val screen: ScreenPowerState,
         val aodAvailable: Boolean,
@@ -256,6 +255,7 @@ constructor(
         val armed: Boolean = false,
         val waitingForFreshWake: Boolean = false,
         val startProgress: Float? = null,
+        val startAlpha: Float = 0f,
         val alpha: Float = 1f,
     )
 
@@ -265,14 +265,13 @@ constructor(
     private val lockscreenWakeAlphaLimit: Flow<Float> =
         combine(
                 keyguardTransitionInteractor.transitionState,
-                keyguardTransitionInteractor.startedKeyguardTransitionStep,
                 powerInteractor.detailedWakefulness
                     .map { it.isAwake() }
                     .distinctUntilChanged(),
                 powerInteractor.screenPowerState,
                 keyguardInteractor.isAodAvailable,
-            ) { step, startedStep, awake, screen, aodAvailable ->
-                LockscreenWakeInput(step, startedStep, awake, screen, aodAvailable)
+            ) { step, awake, screen, aodAvailable ->
+                LockscreenWakeInput(step, awake, screen, aodAvailable)
             }
             .runningFold(LockscreenWakeReveal()) { previous, input ->
                 reduceLockscreenWakeReveal(previous, input)
@@ -291,11 +290,17 @@ constructor(
         val sleepTransition =
             (step.from == LOCKSCREEN || step.from == GONE) && step.to == DOZING
         val wakeTransition = step.from == DOZING && step.to == LOCKSCREEN
-        val stepChanged = previous.input?.step != step
-        val freshWake = wakeTransition && (
-            stepChanged && step.transitionState == STARTED ||
-                input.startedStep.from == DOZING && input.startedStep.to == LOCKSCREEN &&
-                input.startedStep != previous.input?.startedStep
+        val previousStep = previous.input?.step
+        // Use one transition stream. Its STARTED event and first RUNNING
+        // frame can be conflated, but a second, independently collected
+        // STARTED stream must never re-anchor an already running reveal.
+        val freshWake = wakeTransition && previousStep != step && (
+            step.transitionState == STARTED ||
+                previousStep?.from != DOZING || previousStep.to != LOCKSCREEN ||
+                (step.transitionState == RUNNING &&
+                    (previousStep.transitionState == CANCELED ||
+                        previousStep.transitionState == FINISHED ||
+                        step.value < previousStep.value))
             )
         val screenOff = input.screen == ScreenPowerState.SCREEN_OFF
         val turningOff = input.screen == ScreenPowerState.SCREEN_TURNING_OFF
@@ -320,15 +325,20 @@ constructor(
                 // Normal screen-off animations and doze pulses retain their alpha.
                 alpha = when {
                     screenOff -> 0f
-                    interrupted && (turningOff || input.screen == ScreenPowerState.SCREEN_ON &&
-                        previous.input?.screen == ScreenPowerState.SCREEN_ON) -> previous.alpha
+                    interrupted -> previous.alpha
                     else -> 1f
                 },
             )
         }
 
         if (sleepTransition) {
-            return reset.copy(armed = true, alpha = 0f)
+            // Power reversed before keyguard started its next wake. If the
+            // screen never went off, retain the existing opacity rather than
+            // inserting an artificial black frame between the two transitions.
+            return reset.copy(
+                armed = true,
+                alpha = if (screenOff) 0f else previous.alpha,
+            )
         }
         if (!previous.armed) return reset
 
@@ -339,7 +349,11 @@ constructor(
                 // not from a stale RUNNING or CANCELED step.
                 if (input.screen == ScreenPowerState.SCREEN_ON &&
                     step.transitionState == FINISHED) return reset
-                return reset.copy(armed = true, waitingForFreshWake = true, alpha = 0f)
+                return reset.copy(
+                    armed = true,
+                    waitingForFreshWake = true,
+                    alpha = if (screenOff) 0f else previous.alpha,
+                )
             }
             if (step.transitionState == CANCELED) {
                 return reset.copy(
@@ -354,17 +368,22 @@ constructor(
             }
             if (step.transitionState == FINISHED) return reset
 
-            val startProgress =
-                if (freshWake || previous.startProgress == null ||
-                    previous.input?.screen == ScreenPowerState.SCREEN_OFF) {
-                    step.value
-                } else {
-                    previous.startProgress
-                }
-            val alpha =
+            val reanchor = freshWake || previous.startProgress == null ||
+                previous.input?.screen == ScreenPowerState.SCREEN_OFF
+            val startProgress = if (reanchor) step.value else previous.startProgress!!
+            val startAlpha = if (reanchor) previous.alpha else previous.startAlpha
+            val progress =
                 if (startProgress >= 1f) 0f
                 else ((step.value - startProgress) / (1f - startProgress)).coerceIn(0f, 1f)
-            return reset.copy(armed = true, startProgress = startProgress, alpha = alpha)
+            val alpha = MathUtils.lerp(startAlpha, 1f, progress)
+            return reset.copy(
+                armed = true,
+                startProgress = startProgress,
+                startAlpha = startAlpha,
+                // Never dim again because a stale or out-of-order progress
+                // sample was delivered during the same wake.
+                alpha = maxOf(previous.alpha, alpha),
+            )
         }
 
         // A different destination owns its own visibility (unlock, bouncer, etc.).

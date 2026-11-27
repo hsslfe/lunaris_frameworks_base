@@ -25,7 +25,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -44,9 +43,10 @@ constructor(
      */
     fun lockscreenAlpha(from: KeyguardState?): Flow<Float> {
         return keyguardTransitionInteractor.startedKeyguardTransitionStep
-            .filter { from == null || it.from == from }
             .flatMapLatest {
-                if (it.to == KeyguardState.DOZING) {
+                // Every new keyguard transition cancels the previous doze
+                // collector, including transitions from a different state.
+                if ((from == null || it.from == from) && it.to == KeyguardState.DOZING) {
                     keyguardInteractor.dozeTransitionModel
                         .map { dozeModel -> dozeModel.to.lockscreenAlpha() }
                         .filterNotNull()
@@ -65,9 +65,10 @@ constructor(
      */
     fun nonAuthUIAlpha(from: KeyguardState?): Flow<Float> {
         return keyguardTransitionInteractor.startedKeyguardTransitionStep
-            .filter { from == null || it.from == from }
             .flatMapLatest {
-                if (it.to == KeyguardState.DOZING) {
+                // Every new keyguard transition cancels the previous doze
+                // collector, including transitions from a different state.
+                if ((from == null || it.from == from) && it.to == KeyguardState.DOZING) {
                     keyguardInteractor.dozeTransitionModel
                         .map { dozeModel -> dozeModel.to.nonAuthUIAlpha() }
                         .filterNotNull()
