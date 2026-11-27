@@ -51,10 +51,6 @@ interface KeyguardNotificationVisibilityProvider {
      */
     fun shouldHideNotification(entry: NotificationEntry): Boolean
 
-    /** Now Bar-only visibility policy. Implementations must retain all non-display restrictions. */
-    fun shouldHideNotificationForNowBar(entry: NotificationEntry): Boolean =
-        shouldHideNotification(entry)
-
     /** Registers a listener to be notified when the internal keyguard state has been updated. */
     fun addOnStateChangedListener(listener: Consumer<String>)
 
@@ -227,28 +223,6 @@ constructor(
             shouldHideIfEntrySilent(entry) -> HIDE
             else -> SHOW
         }
-
-    override fun shouldHideNotificationForNowBar(entry: NotificationEntry): VisState {
-        if (lockscreenUserManager.shouldShowLockscreenNotifications()) {
-            return shouldHideNotification(entry)
-        }
-        val currentUser = lockscreenUserManager.currentUserId
-        val notifUser = entry.sbn.user.identifier
-        // Only the current user's display preference is overridden. Work and secondary
-        // profiles, administrator policy, lockdown, and secret channels stay protected.
-        return when {
-            !isLockedOrLocking -> HIDE
-            !lockscreenUserManager.allowsNowBarNotificationOverride() -> HIDE
-            notifUser != currentUser && notifUser != UserHandle.USER_ALL -> HIDE
-            keyguardUpdateMonitor.isUserInLockdown(currentUser) -> HIDE
-            secureLockDevice() &&
-                secureLockDeviceInteractor.get().isSecureLockDeviceEnabled.value -> HIDE
-            entry.sbn.notification.visibility == VISIBILITY_SECRET -> HIDE
-            isRankingVisibilitySecret(entry) -> HIDE
-            shouldHideIfEntrySilent(entry) -> HIDE
-            else -> SHOW
-        }
-    }
 
     private fun shouldHideIfEntrySilent(entry: PipelineEntry): VisState =
         when {

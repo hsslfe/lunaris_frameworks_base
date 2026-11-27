@@ -18,7 +18,6 @@ package com.android.systemui.statusbar.notification.collection.coordinator
 
 import android.app.Notification
 import com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings
-import com.android.systemui.axdynamicbar.ui.AxDynamicBarColorOsController
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.statusbar.StatusBarState
@@ -51,18 +50,6 @@ constructor(
     @Application private val applicationScope: CoroutineScope,
 ) : Coordinator {
 
-    private var colorOsStackRevealed = false
-    private val colorOsRevealListener = AxDynamicBarColorOsController.Listener { active, revealed ->
-        val show = active && revealed
-        if (colorOsStackRevealed != show) {
-            colorOsStackRevealed = show
-            val nowBar = nowBarSettings.nowBarAppearance.value
-            if (nowBar.enabled && nowBar.notifications && nowBar.notificationsWhenHidden) {
-                invalidateListFromFilter("Now Bar ColorOS reveal changed")
-            }
-        }
-    }
-
     override fun attach(pipeline: NotifPipeline) {
         setupInvalidateNotifListCallbacks()
         // Filter at the "finalize" stage so that views remain bound by PreparationCoordinator
@@ -70,29 +57,18 @@ constructor(
         keyguardNotificationVisibilityProvider.addOnStateChangedListener(::invalidateListFromFilter)
         // Rebuild the lock-screen list when Now Bar's call visibility option changes.
         nowBarSettings.nowBarAppearance
-            .map { (it.enabled && it.calls && it.hideCall) to
-                (it.enabled && it.notifications && it.notificationsWhenHidden) }
+            .map { it.enabled && it.calls && it.hideCall }
             .distinctUntilChanged()
-            .onEach { invalidateListFromFilter("Now Bar notification visibility changed") }
+            .onEach { invalidateListFromFilter("Now Bar call visibility changed") }
             .launchIn(applicationScope)
-        AxDynamicBarColorOsController.registerListener(colorOsRevealListener)
         updateSectionHeadersVisibility()
     }
 
     private val notifFilter: NotifFilter =
         object : NotifFilter(TAG) {
-            override fun shouldFilterOut(entry: NotificationEntry, now: Long): Boolean {
-                val nowBar = nowBarSettings.nowBarAppearance.value
-                val explicitReveal = statusBarStateController.state == StatusBarState.KEYGUARD &&
-                    nowBar.enabled && nowBar.notifications && nowBar.notificationsWhenHidden &&
-                    AxDynamicBarColorOsController.getOrNull()?.isStackRevealed() == true
-                val hidden = if (explicitReveal) {
-                    keyguardNotificationVisibilityProvider.shouldHideNotificationForNowBar(entry)
-                } else {
-                    keyguardNotificationVisibilityProvider.shouldHideNotification(entry)
-                }
-                return hidden || shouldHideNowBarCall(entry)
-            }
+            override fun shouldFilterOut(entry: NotificationEntry, now: Long): Boolean =
+                keyguardNotificationVisibilityProvider.shouldHideNotification(entry) ||
+                    shouldHideNowBarCall(entry)
         }
 
     private fun shouldHideNowBarCall(entry: NotificationEntry): Boolean {

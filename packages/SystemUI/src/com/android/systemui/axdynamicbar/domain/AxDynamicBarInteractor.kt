@@ -319,9 +319,7 @@ constructor(
                 combine(settings.isEnabled, settings.isKeyguardEnabled) { enabled, kgEnabled ->
                     enabled to kgEnabled
                 },
-                combine(settings.isKeyguardMusicPillEnabled, _lockscreenPrivacyTick, settings.nowBarAppearance.distinctUntilChangedBy {
-                    Triple(it.sourceTypes, it.liveApps, it.notificationsWhenHidden)
-                }) { pill, _, nowBar ->
+                combine(settings.isKeyguardMusicPillEnabled, _lockscreenPrivacyTick, settings.nowBarAppearance.distinctUntilChangedBy { it.sourceTypes to it.liveApps }) { pill, _, nowBar ->
                     pill to nowBar
                 }.combine(settings.isKeyguardColorOsStyleEnabled) { pair, colorOs -> Triple(pair.first, pair.second, colorOs) },
                 combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
@@ -724,21 +722,12 @@ constructor(
     private fun applyKeyguardNotificationPrivacy(
         event: IslandEvent.Notification,
     ): IslandEvent.Notification? {
-        val nowBar = settings.nowBarAppearance.value
-        val regularNotifications = lockscreenUserManager.shouldShowLockscreenNotifications()
-        val overrideHidden = !regularNotifications && nowBar.enabled &&
-            nowBar.notifications && nowBar.notificationsWhenHidden
-        if (!regularNotifications && !overrideHidden) return null
+        if (!lockscreenUserManager.shouldShowLockscreenNotifications()) return null
         val entry = notifCollection.getEntry(event.sbn.key)
         // Do not show a Now Bar notification that cannot be validated against the live collection.
-        if (entry == null && nowBar.enabled) return null
-        if (entry != null) {
-            val hidden = if (overrideHidden) {
-                keyguardNotificationVisibilityProvider.shouldHideNotificationForNowBar(entry)
-            } else {
-                keyguardNotificationVisibilityProvider.shouldHideNotification(entry)
-            }
-            if (hidden) return null
+        if (entry == null && settings.nowBarAppearance.value.enabled) return null
+        if (entry != null && keyguardNotificationVisibilityProvider.shouldHideNotification(entry)) {
+            return null
         }
         val notif = event.sbn.notification ?: return event
         if (notif.visibility == Notification.VISIBILITY_SECRET) return null
@@ -747,18 +736,13 @@ constructor(
         }
         val isLocked =
             keyguardStateController.isMethodSecure && !keyguardStateController.canDismissLockScreen()
-        if (isLocked && !overrideHidden &&
-            !lockscreenUserManager.userAllowsNotificationsInPublic(userId)
-        ) {
+        if (isLocked && !lockscreenUserManager.userAllowsNotificationsInPublic(userId)) {
             return null
         }
-        val shouldRedact = isLocked && (
-            (notif.visibility == Notification.VISIBILITY_PRIVATE &&
-                !lockscreenUserManager.userAllowsPrivateNotificationsInPublic(userId)) ||
-                (nowBar.enabled && entry != null &&
-                    lockscreenUserManager.getRedactionType(entry) !=
-                        NotificationLockscreenUserManager.REDACTION_TYPE_NONE)
-            )
+        val shouldRedact =
+            isLocked &&
+                notif.visibility == Notification.VISIBILITY_PRIVATE &&
+                !lockscreenUserManager.userAllowsPrivateNotificationsInPublic(userId)
         return if (shouldRedact) event.copy(isRedacted = true) else event
     }
 
