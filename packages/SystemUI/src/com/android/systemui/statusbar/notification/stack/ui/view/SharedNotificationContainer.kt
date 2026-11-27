@@ -17,7 +17,6 @@
 package com.android.systemui.statusbar.notification.stack.ui.view
 
 import android.content.Context
-import android.graphics.Canvas
 import android.util.AttributeSet
 import android.view.View
 import androidx.constraintlayout.core.widgets.Optimizer
@@ -29,7 +28,6 @@ import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.TOP
 import androidx.constraintlayout.widget.ConstraintSet.VERTICAL
-import com.android.systemui.axdynamicbar.ui.AxDynamicBarKeyguardExpansion
 import com.android.systemui.res.R
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.SharedNotificationContainerViewModel.HorizontalPosition
@@ -52,13 +50,6 @@ class SharedNotificationContainer(context: Context, attrs: AttributeSet?) :
             setGuidelinePercent(R.id.nssl_guideline, 0.5f)
         }
         baseConstraintSet.applyTo(this)
-    }
-
-    override fun dispatchDraw(canvas: Canvas) {
-        // Native shade/clock binders may restore visibility during a layout
-        // pass. Never paint a competing stack over the expanded activity.
-        if (AxDynamicBarKeyguardExpansion.shouldSuppressLockscreenNotifications()) return
-        super.dispatchDraw(canvas)
     }
 
     fun addNotificationStackScrollLayout(nssl: View) {
