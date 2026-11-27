@@ -120,29 +120,29 @@ constructor(
 
     private val stackGatingState: StateFlow<Pair<Boolean, Boolean>> = run {
         val lockscreenOrAod =
-            combine(
-                isModeActive,
-                interactor.isOnKeyguard,
-                interactor.isBouncerShowing,
-            ) { modeActive, onKeyguard, bouncer ->
-                modeActive && onKeyguard && !bouncer
+            combine(isModeActive, interactor.isOnKeyguard) { modeActive, onKeyguard ->
+                modeActive && onKeyguard
             }
         val shadeClosed =
             combine(
                 interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
                 interactor.isPanelExpanded,
-                keyguardExpansion.isExpanded,
-            ) { qsOpen, panelExpanded, kgExpanded ->
-                !qsOpen && !panelExpanded && !kgExpanded
+                interactor.isBouncerShowing,
+            ) { qsOpen, panelExpanded, bouncer ->
+                !qsOpen && (!panelExpanded || bouncer)
             }
-        combine(
-            lockscreenOrAod,
-            shadeClosed,
-            hasRevealableEvents,
-            _isRevealed,
-        ) { onKg, closed, hasEvents, revealed ->
-            val active = onKg && closed && (hasEvents || revealed)
-            active to (active && revealed)
+        val presentation =
+            combine(_isRevealed, keyguardExpansion.isExpanded, interactor.isBouncerShowing) {
+                revealed, activityExpanded, bouncer ->
+                Triple(revealed, activityExpanded, bouncer)
+            }
+        combine(lockscreenOrAod, shadeClosed, hasRevealableEvents, presentation) {
+            onKg, closed, hasEvents, (revealed, activityExpanded, bouncer) ->
+            // Opening the activity or authentication is not a request to reveal
+            // the native stack. Keep the ColorOS animator in its tucked state
+            // instead of cancelling it (which snaps all rows to full visibility).
+            val active = onKg && closed && (hasEvents || revealed || activityExpanded || bouncer)
+            active to (active && revealed && !activityExpanded && !bouncer)
         }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false to false)

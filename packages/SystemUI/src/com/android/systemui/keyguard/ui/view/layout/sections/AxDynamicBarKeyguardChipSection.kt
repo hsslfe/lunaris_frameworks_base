@@ -22,6 +22,7 @@ import com.android.systemui.media.MediaViewController
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.KeyguardIndicationController
+import com.android.systemui.statusbar.notification.stack.ui.view.SharedNotificationContainer
 import com.android.systemui.util.ScrimUtils
 import com.android.systemui.util.WallpaperDepthUtils
 import javax.inject.Inject
@@ -30,6 +31,7 @@ import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 private const val CHIP_ABOVE_LOCK_MARGIN_DP = 12f
@@ -53,8 +55,6 @@ private val HIDDEN_VIEW_IDS =
         R.id.clock_ls,
         R.id.keyguard_info_widgets,
         R.id.keyguard_widgets,
-        R.id.shared_notification_container,
-        R.id.notificationShelf,
         R.id.bc_smartspace_view,
         R.id.smartspace_card_pager,
         R.id.smartspace_page_indicator,
@@ -84,6 +84,7 @@ constructor(
     private var enforceAction: Runnable? = null
     private val hiddenViews = mutableSetOf<View>()
     private var expandedExitPending = false
+    private var notificationStackOccluded = false
 
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
@@ -138,6 +139,22 @@ constructor(
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     val scope = this
                     scope.launch {
+                        val interactor = viewModel.interactor
+                        combine(
+                            interactor.isOnKeyguard,
+                            interactor.isDozing,
+                            interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
+                            interactor.isPanelExpanded,
+                            viewModel.isBouncerShowing,
+                        ) { onKeyguard, dozing, qsOpen, panelExpanded, bouncer ->
+                            Triple(onKeyguard && !dozing, qsOpen || panelExpanded && !bouncer, bouncer)
+                        }.combine(viewModel.isKeyguardColorOsActive) { state, colorOs ->
+                            state to colorOs
+                        }.distinctUntilChanged().collect {
+                            updateNotificationStackOcclusion(constraintLayout)
+                        }
+                    }
+                    scope.launch {
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
                                 expandedExitPending = false
@@ -146,6 +163,7 @@ constructor(
                                 WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
+                                updateNotificationStackOcclusion(constraintLayout)
                             }
                         }
                     }
@@ -211,6 +229,7 @@ constructor(
         scrim.isClickable = expanded
         if (expanded) {
             expandedExitPending = true
+            updateNotificationStackOcclusion(constraintLayout)
             WallpaperDepthUtils.get()?.setDynamicBarExpanded(true)
             scrim.visibility = View.VISIBLE
             scrim.animate().alpha(1f).setDuration(200L).withEndAction(null).start()
@@ -228,10 +247,29 @@ constructor(
             WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
+        updateNotificationStackOcclusion(constraintLayout)
         if (expanded) {
             setHiddenViewsVisibility(constraintLayout, View.INVISIBLE)
             applyExpandedLp(composeView)
         }
+    }
+
+    private fun updateNotificationStackOcclusion(constraintLayout: ConstraintLayout) {
+        val interactor = viewModel.interactor
+        val authenticating = viewModel.isBouncerShowing.value
+        val lockscreen = interactor.isOnKeyguard.value && !interactor.isDozing.value &&
+            interactor.qsExpansion.value <= 0f &&
+            (!interactor.isPanelExpanded.value || authenticating)
+        // Keep the stack hidden across the activity's exit and the handoff to
+        // authentication. A real shade or a different keyguard state owns its
+        // own notification visibility.
+        notificationStackOccluded = lockscreen &&
+            (expandedExitPending || viewModel.isKeyguardExpanded.value ||
+                (authenticating && (notificationStackOccluded ||
+                    viewModel.isKeyguardColorOsActive.value)))
+        constraintLayout.rootView
+            .findViewById<SharedNotificationContainer>(R.id.shared_notification_container)
+            ?.setKeyguardActivityOccluded(notificationStackOccluded)
     }
 
     private fun rebindPreDrawAction(constraintLayout: ConstraintLayout, expanded: Boolean) {
@@ -444,6 +482,10 @@ constructor(
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
         expandedExitPending = false
+        notificationStackOccluded = false
+        constraintLayout.rootView
+            .findViewById<SharedNotificationContainer>(R.id.shared_notification_container)
+            ?.setKeyguardActivityOccluded(false)
         constraintLayout.findViewById<View>(dismissViewId)?.animate()?.cancel()
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
         MediaViewController.getOrNull()?.setExpandedMusicOpen(false)

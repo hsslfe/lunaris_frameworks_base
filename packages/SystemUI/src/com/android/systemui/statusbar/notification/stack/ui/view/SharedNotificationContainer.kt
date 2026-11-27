@@ -19,6 +19,7 @@ package com.android.systemui.statusbar.notification.stack.ui.view
 import android.content.Context
 import android.util.AttributeSet
 import android.view.View
+import android.view.MotionEvent
 import androidx.constraintlayout.core.widgets.Optimizer
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
@@ -42,6 +43,8 @@ class SharedNotificationContainer(context: Context, attrs: AttributeSet?) :
     ConstraintLayout(context, attrs) {
 
     private val baseConstraintSet = ConstraintSet()
+    private var keyguardActivityOccluded = false
+    private var accessibilityBeforeOcclusion = IMPORTANT_FOR_ACCESSIBILITY_AUTO
 
     init {
         optimizationLevel = optimizationLevel or Optimizer.OPTIMIZATION_GRAPH
@@ -51,6 +54,26 @@ class SharedNotificationContainer(context: Context, attrs: AttributeSet?) :
         }
         baseConstraintSet.applyTo(this)
     }
+
+    /**
+     * Keep the actual stack composited out while an activity or authentication
+     * covers keyguard. Do not change child visibility or the shade's own alpha.
+     */
+    fun setKeyguardActivityOccluded(occluded: Boolean) {
+        if (keyguardActivityOccluded == occluded) return
+        keyguardActivityOccluded = occluded
+        if (occluded) {
+            accessibilityBeforeOcclusion = importantForAccessibility
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        } else {
+            importantForAccessibility = accessibilityBeforeOcclusion
+        }
+        // Independent of NSSL's normal keyguard/shade alpha and constraint updates.
+        transitionAlpha = if (occluded) 0f else 1f
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean =
+        !keyguardActivityOccluded && super.dispatchTouchEvent(ev)
 
     fun addNotificationStackScrollLayout(nssl: View) {
         addView(nssl)
