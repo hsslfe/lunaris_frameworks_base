@@ -1,5 +1,12 @@
 package com.android.systemui.axdynamicbar.ui.compose
 
+import com.android.systemui.axdynamicbar.shared.boundsOnScreen
+import com.android.systemui.axdynamicbar.shared.IslandMorphMotion
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.border
 import androidx.compose.animation.AnimatedVisibility
@@ -122,6 +129,9 @@ fun AxDynamicBarChip(
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
 
     val motionScheme = MaterialTheme.motionScheme
+    val isExpanded by viewModel.isExpanded.collectAsStateWithLifecycle()
+    val view = LocalView.current
+    val morphScale = rememberChipMorphScale(isExpanded && !isOnKeyguard)
 
     AnimatedVisibility(
         // ignoreKeyguard is used by some status-bar hosts, but it must not
@@ -271,6 +281,21 @@ fun AxDynamicBarChip(
 
                 val progress = chipProgressFor(event, includeMediaProgress = useCircleStyle)
 
+                val chipMorphModifier = Modifier
+                    .onGloballyPositioned {
+                        // Freeze the source while expanded and during restore;
+                        // measuring a squeezed chip would corrupt the exit target.
+                        if (!isOnKeyguard && !isExpanded && morphScale.value >= 0.999f) {
+                            viewModel.updateChipBounds(it.boundsOnScreen(view))
+                        }
+                    }
+                    .graphicsLayer {
+                        if (!isOnKeyguard) {
+                            scaleX = morphScale.value
+                            alpha = (morphScale.value / MORPH_FADE_SCALE).coerceIn(0f, 1f)
+                        }
+                    }
+
                 if (useCircleStyle) {
                     Box(
                         modifier = Modifier.fillMaxHeight(),
@@ -281,7 +306,7 @@ fun AxDynamicBarChip(
                             accent = accent,
                             contentColor = contentColor,
                             progress = progress,
-                            modifier = Modifier
+                            modifier = chipMorphModifier
                                 .clip(CircleShape)
                                 .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape)
                                 .islandBlur(
@@ -298,7 +323,7 @@ fun AxDynamicBarChip(
                 ) {
                     Row(
                         modifier =
-                            Modifier.height(ChipHeight)
+                            chipMorphModifier.height(ChipHeight)
                                 .widthIn(max = 100.dp)
                                 .clip(ChipShape)
                                 .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), ChipShape)
@@ -487,3 +512,19 @@ private fun chipIconKey(event: IslandEvent): Any =
         is IslandEvent.Notification -> event.sbn.key
         else -> event.id
     }
+
+private const val MORPH_FADE_SCALE = 0.7f
+
+@Composable
+private fun rememberChipMorphScale(hidden: Boolean): Animatable<Float, AnimationVector1D> {
+    val scale = remember { Animatable(1f, visibilityThreshold = 0.001f) }
+    LaunchedEffect(hidden) {
+        if (hidden) {
+            scale.animateTo(0f, IslandMorphMotion.PillShrink)
+        } else if (scale.value != 1f) {
+            scale.animateTo(1f, IslandMorphMotion.pillRestore(scale.value))
+        }
+    }
+    return scale
+}
+

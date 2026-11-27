@@ -1,5 +1,6 @@
 package com.android.systemui.axdynamicbar.ui
 
+import androidx.compose.ui.geometry.Rect
 import android.content.Context
 import android.database.ContentObserver
 import android.os.Handler
@@ -333,6 +334,16 @@ constructor(
 
     fun updateChipCenterX(fraction: Float) {
         if (fraction.isFinite()) _chipCenterXFraction.value = fraction.coerceIn(0f, 1f)
+    }
+
+    private val _chipBoundsOnScreen = MutableStateFlow<Rect?>(null)
+    val chipBoundsOnScreen: StateFlow<Rect?> = _chipBoundsOnScreen.asStateFlow()
+
+    fun updateChipBounds(bounds: Rect) {
+        if (bounds.width > 0f && bounds.height > 0f &&
+            bounds.left.isFinite() && bounds.top.isFinite() &&
+            bounds.right.isFinite() && bounds.bottom.isFinite()
+        ) _chipBoundsOnScreen.value = bounds
     }
 
     val isExpanded: StateFlow<Boolean> = statusBarExpansion.isExpanded
