@@ -39,6 +39,7 @@ import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.KeyguardState.OFF
 import com.android.systemui.keyguard.shared.model.KeyguardState.PRIMARY_BOUNCER
+import com.android.systemui.keyguard.shared.model.TransitionState.CANCELED
 import com.android.systemui.keyguard.shared.model.TransitionState.FINISHED
 import com.android.systemui.keyguard.shared.model.TransitionState.RUNNING
 import com.android.systemui.keyguard.shared.model.TransitionState.STARTED
@@ -242,64 +243,138 @@ constructor(
                 .onStart { emit(false) },
         )
 
-    private data class LockscreenWakeReveal(
-        val fromSleep: Boolean = false,
-        val step: TransitionStep = TransitionStep(),
-        val startProgress: Float = 0f,
+    private data class LockscreenWakeInput(
+        val step: TransitionStep,
+        val startedStep: TransitionStep,
+        val awake: Boolean,
+        val screen: ScreenPowerState,
+        val aodAvailable: Boolean,
     )
 
-    // Use the same non-AOD wake reveal whether the device went to sleep from the
-    // lockscreen or from an unlocked screen. Keep content hidden across screen-on,
-    // then bound its opacity by the actual wake animation rather than a fixed delay.
+    private data class LockscreenWakeReveal(
+        val input: LockscreenWakeInput? = null,
+        val armed: Boolean = false,
+        val waitingForFreshWake: Boolean = false,
+        val startProgress: Float? = null,
+        val alpha: Float = 1f,
+    )
+
+    // Reduce power and keyguard events together. In particular, a reversed wake can
+    // leave the previous DOZING -> LOCKSCREEN step visible in transitionState until
+    // the next transition starts. Never use that old progress for a new wake.
     private val lockscreenWakeAlphaLimit: Flow<Float> =
         combine(
-                keyguardTransitionInteractor.transitionState.runningFold(
-                    LockscreenWakeReveal()
-                ) { previous, step ->
-                    when {
-                        (step.from == LOCKSCREEN || step.from == GONE) && step.to == DOZING ->
-                            LockscreenWakeReveal(fromSleep = true, step = step)
-                        previous.fromSleep && step.from == DOZING && step.to == LOCKSCREEN ->
-                            LockscreenWakeReveal(
-                                fromSleep = true,
-                                step = step,
-                                startProgress =
-                                    if (previous.step.from == DOZING &&
-                                        previous.step.to == LOCKSCREEN &&
-                                        step.transitionState != STARTED
-                                    ) {
-                                        previous.startProgress
-                                    } else {
-                                        step.value
-                                    },
-                            )
-                        else -> LockscreenWakeReveal()
-                    }
-                },
-                powerInteractor.detailedWakefulness,
+                keyguardTransitionInteractor.transitionState,
+                keyguardTransitionInteractor.startedKeyguardTransitionStep,
+                powerInteractor.detailedWakefulness
+                    .map { it.isAwake() }
+                    .distinctUntilChanged(),
                 powerInteractor.screenPowerState,
                 keyguardInteractor.isAodAvailable,
-            ) { reveal, wakefulness, screenPowerState, aodAvailable ->
-                val step = reveal.step
-                when {
-                    aodAvailable || !reveal.fromSleep -> 1f
-                    step.to == DOZING ->
-                        if (screenPowerState == ScreenPowerState.SCREEN_OFF ||
-                            wakefulness.isAwake()
-                        ) {
-                            0f
-                        } else {
-                            // Leave screen-off animation and doze pulses unchanged.
-                            1f
-                        }
-                    step.transitionState == FINISHED -> 1f
-                    reveal.startProgress >= 1f -> 0f
-                    else ->
-                        ((step.value - reveal.startProgress) / (1f - reveal.startProgress))
-                            .coerceIn(0f, 1f)
-                }
+            ) { step, startedStep, awake, screen, aodAvailable ->
+                LockscreenWakeInput(step, startedStep, awake, screen, aodAvailable)
             }
+            .runningFold(LockscreenWakeReveal()) { previous, input ->
+                reduceLockscreenWakeReveal(previous, input)
+            }
+            .map { it.alpha }
             .distinctUntilChanged()
+
+    private fun reduceLockscreenWakeReveal(
+        previous: LockscreenWakeReveal,
+        input: LockscreenWakeInput,
+    ): LockscreenWakeReveal {
+        val step = input.step
+        val reset = LockscreenWakeReveal(input = input)
+        if (input.aodAvailable) return reset
+
+        val sleepTransition =
+            (step.from == LOCKSCREEN || step.from == GONE) && step.to == DOZING
+        val wakeTransition = step.from == DOZING && step.to == LOCKSCREEN
+        val stepChanged = previous.input?.step != step
+        val freshWake = wakeTransition && (
+            stepChanged && step.transitionState == STARTED ||
+                input.startedStep.from == DOZING && input.startedStep.to == LOCKSCREEN &&
+                input.startedStep != previous.input?.startedStep
+            )
+        val screenOff = input.screen == ScreenPowerState.SCREEN_OFF
+        val turningOff = input.screen == ScreenPowerState.SCREEN_TURNING_OFF
+
+        if (!input.awake || turningOff) {
+            // Arm on the power event too: rapid reversal may conflate the sleep
+            // transition's STARTED and FINISHED steps into the next wake step.
+            val armed = previous.armed || sleepTransition ||
+                step.to == LOCKSCREEN || step.to == GONE
+            if (!armed) return reset
+
+            val interrupted = previous.startProgress != null ||
+                (previous.armed && previous.alpha < 1f)
+            val wasSleeping = previous.input?.let {
+                !it.awake || it.screen == ScreenPowerState.SCREEN_TURNING_OFF
+            } == true
+            return reset.copy(
+                armed = true,
+                waitingForFreshWake = wakeTransition && !freshWake &&
+                    (!wasSleeping || previous.waitingForFreshWake),
+                // Do not restart a half-revealed clock at full opacity on sleep.
+                // Normal screen-off animations and doze pulses retain their alpha.
+                alpha = when {
+                    screenOff -> 0f
+                    interrupted && (turningOff || input.screen == ScreenPowerState.SCREEN_ON &&
+                        previous.input?.screen == ScreenPowerState.SCREEN_ON) -> previous.alpha
+                    else -> 1f
+                },
+            )
+        }
+
+        if (sleepTransition) {
+            return reset.copy(armed = true, alpha = 0f)
+        }
+        if (!previous.armed) return reset
+
+        if (wakeTransition) {
+            if (previous.waitingForFreshWake && !freshWake) {
+                // No new wake transition may be necessary when power reverses
+                // before keyguard has left LOCKSCREEN. Release on a settled display,
+                // not from a stale RUNNING or CANCELED step.
+                if (input.screen == ScreenPowerState.SCREEN_ON &&
+                    step.transitionState == FINISHED) return reset
+                return reset.copy(armed = true, waitingForFreshWake = true, alpha = 0f)
+            }
+            if (step.transitionState == CANCELED) {
+                return reset.copy(
+                    armed = true,
+                    waitingForFreshWake = true,
+                    alpha = if (screenOff) 0f else previous.alpha,
+                )
+            }
+            if (screenOff) {
+                // Do not consume the reveal while the display is still unpowered.
+                return reset.copy(armed = true, startProgress = step.value, alpha = 0f)
+            }
+            if (step.transitionState == FINISHED) return reset
+
+            val startProgress =
+                if (freshWake || previous.startProgress == null ||
+                    previous.input?.screen == ScreenPowerState.SCREEN_OFF) {
+                    step.value
+                } else {
+                    previous.startProgress
+                }
+            val alpha =
+                if (startProgress >= 1f) 0f
+                else ((step.value - startProgress) / (1f - startProgress)).coerceIn(0f, 1f)
+            return reset.copy(armed = true, startProgress = startProgress, alpha = alpha)
+        }
+
+        // A different destination owns its own visibility (unlock, bouncer, etc.).
+        // If keyguard never left LOCKSCREEN, hold only until the display is on.
+        if (step.to == LOCKSCREEN && step.transitionState == FINISHED &&
+            input.screen != ScreenPowerState.SCREEN_ON) {
+            return reset.copy(armed = true, alpha = 0f)
+        }
+        return reset
+    }
 
     private val zoomOutFromGlanceableHub: Flow<Float> =
         if (!Flags.gestureBetweenHubAndLockscreenMotion()) {
