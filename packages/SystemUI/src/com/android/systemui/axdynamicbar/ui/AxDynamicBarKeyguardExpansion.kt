@@ -24,6 +24,9 @@ import com.android.systemui.statusbar.pipeline.battery.domain.interactor.Battery
 import com.android.systemui.statusbar.policy.BatteryController
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,6 +40,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class AxDynamicBarKeyguardExpansion
 @Inject
@@ -75,8 +79,9 @@ constructor(
             batteryInfo,
             interactor.settings.isKeyguardEnabled,
             interactor.settings.keyguardBatteryChipMode,
-        ) { battery, enabled, mode ->
-            battery.takeIf { enabled && mode > 0 && it.isCharging }
+            interactor.settings.nowBarAppearance,
+        ) { battery, enabled, mode, nowBar ->
+            battery.takeIf { !nowBar.enabled && enabled && mode > 0 && it.isCharging }
         }.stateIn(applicationScope, SharingStarted.Eagerly, null)
 
     // The lock-screen battery chip has no entry in uiState. Keep its card selected after a tap.
@@ -106,15 +111,21 @@ constructor(
                 interactor.isBouncerShowing,
                 interactor.legacyShadeExpansion.map { it >= 0.95f }.distinctUntilChanged(),
                 interactor.isDreaming,
-                panelEvent.map { it != null }.distinctUntilChanged(),
+                panelEvent.map { it != null }.distinctUntilChanged().transformLatest { present ->
+                    // Only keep the independent Now Bar panel through transient metadata gaps.
+                    if (!present && target.value == Target.EVENT &&
+                        interactor.settings.nowBarAppearance.value.enabled) delay(280L)
+                    emit(present)
+                }.distinctUntilChanged(),
             ) { bouncer, shadeFull, dreaming, chip ->
                 !bouncer && shadeFull && !dreaming && chip
             }
         val settingsAllowKeyguard = combine(
             interactor.settings.isKeyguardEnabled,
             interactor.settings.isKeyguardMusicPillEnabled,
-        ) { keyguardEnabled, musicPillEnabled ->
-            keyguardEnabled || musicPillEnabled
+            interactor.settings.nowBarAppearance,
+        ) { keyguardEnabled, musicPillEnabled, nowBar ->
+            keyguardEnabled || musicPillEnabled || nowBar.enabled
         }
         combine(contextAndDoze, shadeAndBouncer, settingsAllowKeyguard) { a, b, enabled ->
             a && b && enabled

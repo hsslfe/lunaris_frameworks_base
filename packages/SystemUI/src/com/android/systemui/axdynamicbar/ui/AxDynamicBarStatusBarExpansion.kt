@@ -21,6 +21,9 @@ import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import javax.inject.Inject
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,15 +62,17 @@ constructor(
             .onEach { if (it) collapse() }
             .launchIn(applicationScope)
 
-        interactor.uiState
-            .map { state ->
-                state.events.isEmpty() || state.events.all { it is IslandEvent.AospChip }
-            }
-            .distinctUntilChanged()
-            .onEach { shouldCollapse ->
-                if (shouldCollapse) collapse()
-            }
-            .launchIn(applicationScope)
+        applicationScope.launch {
+            interactor.uiState
+                .map { state -> state.events.none { it !is IslandEvent.AospChip } }
+                .distinctUntilChanged()
+                .collectLatest { empty ->
+                    if (empty && _intent.value) {
+                        delay(280L)
+                        collapse()
+                    }
+                }
+        }
 
         combine(
             interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),

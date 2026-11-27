@@ -199,6 +199,19 @@ fun AxDynamicBarKeyguardChip(
     viewModel: AxDynamicBarChipViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val style by viewModel.nowBarAppearance.collectAsStateWithLifecycle()
+    if (style.enabled) {
+        IndependentNowBarKeyguardChip(viewModel, modifier)
+    } else {
+        LegacyAxDynamicBarKeyguardChip(viewModel, modifier)
+    }
+}
+
+@Composable
+private fun LegacyAxDynamicBarKeyguardChip(
+    viewModel: AxDynamicBarChipViewModel,
+    modifier: Modifier = Modifier,
+) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
     val isKeyguardChipVisible by viewModel.isKeyguardChipVisible.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()

@@ -83,8 +83,9 @@ constructor(
         combine(
             interactor.settings.isKeyguardEnabled,
             interactor.settings.isKeyguardColorOsStyleEnabled,
-        ) { keyguardEnabled, colorOsEnabled ->
-            keyguardEnabled && colorOsEnabled
+            interactor.settings.nowBarAppearance,
+        ) { keyguardEnabled, colorOsEnabled, nowBar ->
+            keyguardEnabled && colorOsEnabled && !nowBar.enabled
         }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)

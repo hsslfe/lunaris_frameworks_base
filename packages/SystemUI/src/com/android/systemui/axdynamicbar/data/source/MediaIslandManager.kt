@@ -57,6 +57,7 @@ constructor(
     @Volatile private var listening = false
     @Volatile private var sessionMediaColor: Int = 0
     @Volatile private var sessionAlbumArt: Drawable? = null
+    @Volatile private var sessionAlbumArtTrack: Pair<String, String>? = null
     @Volatile private var sessionAppIcon: Drawable? = null
     private val systemMediaSessionManager: SystemMediaSessionManager by lazy {
         context.getSystemService(SystemMediaSessionManager::class.java)
@@ -99,9 +100,23 @@ constructor(
         }
 
         override fun onAlbumArtChanged(drawable: Drawable?) {
-            if (!listening || sessionAlbumArt === drawable) return
+            if (!listening) return
+            val controllerMetadata = getActiveController()?.metadata
+            // The media session bitmap is track-specific; a late background
+            // artwork callback must not replace it with a prior track's cover.
+            if (controllerMetadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART) != null ||
+                controllerMetadata?.getBitmap(MediaMetadata.METADATA_KEY_ART) != null) return
+
+            val trackKey = mediaTrackKey(controllerMetadata)
+                ?: _mediaEvent.value?.let { it.track to it.artist }
+            if (sessionAlbumArt === drawable && sessionAlbumArtTrack == trackKey) return
             sessionAlbumArt = drawable
-            _mediaEvent.update { event -> event?.copy(albumArt = drawable) }
+            sessionAlbumArtTrack = trackKey
+            _mediaEvent.update { event ->
+                if (event != null && trackKey == (event.track to event.artist))
+                    event.copy(albumArt = drawable)
+                else event
+            }
         }
 
         override fun onAppIconChanged(drawable: Drawable) {
@@ -119,7 +134,13 @@ constructor(
                 if (event.track == normalizedTrack && event.artist == normalizedArtist) {
                     event
                 } else {
-                    event.copy(track = normalizedTrack, artist = normalizedArtist)
+                    val nextKey = normalizedTrack to normalizedArtist
+                    // Do not carry the previous track's artwork into the new song.
+                    event.copy(
+                        track = normalizedTrack,
+                        artist = normalizedArtist,
+                        albumArt = if (sessionAlbumArtTrack == nextKey) sessionAlbumArt else null,
+                    )
                 }
             }
         }
@@ -232,13 +253,20 @@ constructor(
             null
         }
 
-    private fun resolveAlbumArt(track: String, artist: String, albumArt: Drawable?): Drawable? {
-        val current = _mediaEvent.value ?: return albumArt
-        return if (current.track == track && current.artist == artist) {
-            current.albumArt ?: albumArt
-        } else {
-            albumArt
-        }
+    private fun mediaTrackKey(metadata: MediaMetadata?): Pair<String, String>? {
+        if (metadata == null) return null
+        val title = metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            ?: metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
+            ?: return null
+        return title to (metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: "")
+    }
+
+    private fun resolveAlbumArt(track: String, artist: String, metadataArt: Drawable?): Drawable? {
+        // Prefer the current song's media metadata over an older session cache.
+        if (metadataArt != null) return metadataArt
+        val key = track to artist
+        if (sessionAlbumArtTrack == key) return sessionAlbumArt
+        return _mediaEvent.value?.takeIf { it.track == track && it.artist == artist }?.albumArt
     }
 
     private val mediaListener =
@@ -257,12 +285,10 @@ constructor(
                 val rawDuration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
                 val duration = if (rawDuration > 0L) rawDuration else UNKNOWN_DURATION
 
-                val albumArt = sessionAlbumArt ?: run {
-                    val bmp = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-                        ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
-                    bmp?.let { BitmapDrawable(context.resources, it) }
-                }
-                val resolvedAlbumArt = resolveAlbumArt(track, artist, albumArt)
+                val bmp = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+                    ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+                val metadataArt = bmp?.let { BitmapDrawable(context.resources, it) }
+                val resolvedAlbumArt = resolveAlbumArt(track, artist, metadataArt)
 
                 val controller = getActiveController()
                 val ps = controller?.playbackState
@@ -313,9 +339,16 @@ constructor(
                         )
                 } else {
                     _mediaEvent.update { event ->
-                        event?.copy(
+                        if (event == null) return@update null
+                        val updatedTrack = track.ifEmpty { event.track }
+                        val updatedArtist = artist.ifEmpty { event.artist }
+                        val changedTrack = event.track != updatedTrack || event.artist != updatedArtist
+                        event.copy(
+                            track = updatedTrack,
+                            artist = updatedArtist,
                             isPlaying = false,
-                            albumArt = resolvedAlbumArt ?: event.albumArt,
+                            albumArt = if (changedTrack) resolvedAlbumArt
+                                else resolvedAlbumArt ?: event.albumArt,
                             progress = progress,
                             duration = duration.takeIf { it > 0L } ?: event.duration,
                             position = posMs,
@@ -358,6 +391,7 @@ constructor(
         activeMediaPackage = null
         sessionMediaColor = 0
         sessionAlbumArt = null
+        sessionAlbumArtTrack = null
         sessionAppIcon = null
     }
 

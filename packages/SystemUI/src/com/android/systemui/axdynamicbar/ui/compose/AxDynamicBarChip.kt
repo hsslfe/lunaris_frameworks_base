@@ -3,6 +3,7 @@ package com.android.systemui.axdynamicbar.ui.compose
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.border
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
@@ -11,10 +12,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -32,12 +29,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.ui.graphics.graphicsLayer
+import com.android.systemui.axdynamicbar.shared.IslandMorphMotion
+import com.android.systemui.axdynamicbar.shared.boundsOnScreen
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,7 +47,6 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -67,8 +67,6 @@ import androidx.compose.ui.res.stringResource
 import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.axdynamicbar.shared.AlphaIconBg
 import com.android.systemui.axdynamicbar.shared.AlphaGlass
-import com.android.systemui.axdynamicbar.shared.IslandMorphMotion
-import com.android.systemui.axdynamicbar.shared.boundsOnScreen
 import com.android.systemui.axdynamicbar.shared.islandBlur
 import com.android.systemui.axdynamicbar.shared.AlphaSecondary
 import com.android.systemui.axdynamicbar.shared.AlphaTertiary
@@ -88,10 +86,6 @@ import com.android.systemui.axdynamicbar.shared.toScaledBitmap
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
 import com.android.systemui.res.R
 import kotlin.math.abs
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
 
 private val ChipShape = ShapeXl
 private val ChipHeight = 24.dp
@@ -105,12 +99,13 @@ fun AxDynamicBarChip(
 ) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
     val isOnKeyguard by viewModel.isOnKeyguard.collectAsStateWithLifecycle()
+    val nowBarStyle by viewModel.nowBarAppearance.collectAsStateWithLifecycle()
     val keyguardCarrier by viewModel.keyguardCarrierText.collectAsStateWithLifecycle()
     val chipStyle by viewModel.chipStyle.collectAsStateWithLifecycle()
     val isMediaEventTypeEnabled by viewModel.isMediaEventTypeEnabled.collectAsStateWithLifecycle()
 
-    var toggleCount by remember { mutableIntStateOf(0) }
-
+    var fingerDown by remember { mutableStateOf(false) }
+    val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
     val displayEvent: IslandEvent? = state?.let { chipState ->
         val raw = chipState.notificationAlert ?: chipState.event
         when {
@@ -122,10 +117,10 @@ fun AxDynamicBarChip(
     
     val carrierName = if (isOnKeyguard && ignoreKeyguard) keyguardCarrier.takeIf { it.isNotBlank() } else null
     val chipTextMaxWidth = dimensionResource(R.dimen.ongoing_activity_chip_max_text_width)
+    val view = LocalView.current
 
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val longPressTimeoutMillis = LocalViewConfiguration.current.longPressTimeoutMillis
-    val view = LocalView.current
     val currentDisplayEvent = rememberUpdatedState(displayEvent)
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
 
@@ -138,16 +133,25 @@ fun AxDynamicBarChip(
     }
 
     AnimatedVisibility(
-        visible = state != null && displayEvent != null && (ignoreKeyguard || !isOnKeyguard),
+        // ignoreKeyguard is used by some status-bar hosts, but it must not
+        // duplicate the independent Now Bar on the actual lockscreen.
+        visible = state != null && displayEvent != null &&
+            (!isOnKeyguard || (ignoreKeyguard && !nowBarStyle.enabled)),
         enter = fadeIn(motionScheme.defaultEffectsSpec()) + scaleIn(initialScale = 0.8f, animationSpec = motionScheme.defaultSpatialSpec()),
-        exit = fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.8f, animationSpec = motionScheme.fastSpatialSpec()),
+        exit = if (isOnKeyguard && nowBarStyle.enabled) ExitTransition.None else
+            fadeOut(motionScheme.fastEffectsSpec()) +
+                scaleOut(targetScale = 0.8f, animationSpec = motionScheme.fastSpatialSpec()),
         modifier = modifier
             .padding(start = 4.dp, end = 2.dp)
             .widthIn(min = 25.dp, max = 90.dp)
+            // Squash inward so the circular and regular pill outlines stay
+            // inside the status-bar measurement even during rapid swipes.
+            .pillPressMotion(fingerDown)
             .pointerInput(viewModel, displayEvent?.id, isOnKeyguard, ignoreKeyguard,
                 touchSlop, longPressTimeoutMillis) {
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                    fingerDown = true
 
                     val startX = down.position.x
                     val startY = down.position.y
@@ -156,6 +160,7 @@ fun AxDynamicBarChip(
                     var decided = false
                     var longPressTriggered = false
 
+                    try {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -180,8 +185,7 @@ fun AxDynamicBarChip(
                             }
                             if (dragging) {
                                 change.consume()
-                                if (totalDx > 0) viewModel.cyclePrev()
-                                else viewModel.cycleNext()
+                                swipe.cycle(previous = totalDx > 0f)
                             } else if (!decided) {
                                 change.consume()
                                 if (!longPressTriggered && viewModel.chipTapClosesPanel(down.uptimeMillis)) {
@@ -193,11 +197,9 @@ fun AxDynamicBarChip(
                                     } else if (current is IslandEvent.AospChip) {
                                         if (!viewModel.handleAospChipTap(current, expandableController.expandable)) {
                                             viewModel.statusBarExpansion.expand()
-                                            toggleCount++
                                         }
                                     } else {
                                         viewModel.statusBarExpansion.expand()
-                                        toggleCount++
                                     }
                                 }
                             }
@@ -210,7 +212,9 @@ fun AxDynamicBarChip(
                             if (abs(dx) >= abs(dy)) {
                                 decided = true
                                 dragging = true
+                                fingerDown = false
                                 totalDx = dx
+                                swipe.drag(dx, touchSlop)
                                 change.consume()
                             } else {
                                 decided = true
@@ -218,15 +222,19 @@ fun AxDynamicBarChip(
                             }
                         } else if (dragging) {
                             totalDx = dx
+                            swipe.drag(dx, touchSlop)
                             change.consume()
                         }
                     }
+                    } finally {
+                        swipe.release()
+                        fingerDown = false
+                    }
                 }
-            },
+            }
+            .pillSwipeMotion(swipe),
     ) {
         state?.let { chipState ->
-            val isAlert = chipState.notificationAlert != null
-
             val event = displayEvent ?: return@let
 
             Expandable(
@@ -235,26 +243,15 @@ fun AxDynamicBarChip(
                 defaultMinSize = false,
             ) { _ ->
                 AnimatedContent(
-                    targetState = chipDisplayKey(displayEvent, isAlert),
+                    // Read the animated event snapshot, not the latest outer
+                    // state, so outgoing media artwork/text cannot jump ahead.
+                    targetState = PillDisplay(event, chipState.notificationAlert != null),
+                    contentKey = { it.event.id to it.isAlert },
                     transitionSpec = {
-                        ((
-                            fadeIn(motionScheme.defaultEffectsSpec()) +
-                                scaleIn(
-                                    initialScale = 0.92f,
-                                    animationSpec = motionScheme.defaultSpatialSpec(),
-                                )
-                            ) togetherWith (
-                            fadeOut(motionScheme.fastEffectsSpec()) +
-                                scaleOut(
-                                    targetScale = 0.92f,
-                                    animationSpec = motionScheme.fastSpatialSpec(),
-                                )
-                            ))
-                            .using(sizeTransform = null)
+                        pillEventTransition(swipe.direction(initialState.event, targetState.event, chipState.allEvents))
                     },
                     label = "chip_event",
-                ) {
-                    val event = displayEvent
+                ) { (event, isAlert) ->
                     val rawAccent = islandChipColorFor(event)
                     val accent by animateColorAsState(rawAccent, MaterialTheme.motionScheme.fastEffectsSpec(), label = "accent")
                     val contentColor by animateColorAsState(
@@ -266,6 +263,8 @@ fun AxDynamicBarChip(
                     }
                 val useCircleStyle = chipStyle == 1 &&
                         !isAlert &&
+                        // Unlock must occupy the full main pill, even when the
+                        // user selected circular chips for other activities.
                         event !is IslandEvent.BiometricUnlock &&
                         event !is IslandEvent.AudioRecording &&
                         event !is IslandEvent.Timer &&
@@ -296,7 +295,6 @@ fun AxDynamicBarChip(
                             contentColor = contentColor,
                             progress = progress,
                             modifier = chipMorphModifier
-                                .squishAnimation(toggleCount)
                                 .clip(CircleShape)
                                 .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape)
                                 .islandBlur(
@@ -313,10 +311,8 @@ fun AxDynamicBarChip(
                 ) {
                     Row(
                         modifier =
-                            chipMorphModifier
-                                .height(ChipHeight)
+                            chipMorphModifier.height(ChipHeight)
                                 .widthIn(max = 100.dp)
-                                .squishAnimation(toggleCount)
                                 .clip(ChipShape)
                                 .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), ChipShape)
                                 .islandBlur(
@@ -509,9 +505,6 @@ private fun rememberChipMorphScale(hidden: Boolean): Animatable<Float, Animation
     return scale
 }
 
-private fun chipDisplayKey(event: IslandEvent, isAlert: Boolean): String =
-    if (isAlert) "alert:${event.id}" else event.id
-
 private fun chipIconKey(event: IslandEvent): Any =
     when (event) {
         is IslandEvent.AppSwitch -> {
@@ -522,48 +515,3 @@ private fun chipIconKey(event: IslandEvent): Any =
         is IslandEvent.Notification -> event.sbn.key
         else -> event.id
     }
-
-@Composable
-private fun Modifier.squishAnimation(toggleCount: Int): Modifier {
-    val scaleX = remember { Animatable(1f, visibilityThreshold = 0.01f) }
-    val scaleY = remember { Animatable(1f, visibilityThreshold = 0.01f) }
-    val currentToggleCount by rememberUpdatedState(toggleCount)
-
-    LaunchedEffect(Unit) {
-        snapshotFlow { currentToggleCount }
-            .drop(1)
-            .collectLatest {
-                scaleX.snapTo(1f)
-                scaleY.snapTo(1f)
-                coroutineScope {
-                    launch {
-                        scaleX.animateTo(
-                            targetValue = 1f,
-                            animationSpec = keyframes {
-                                durationMillis = 400
-                                1.06f at 120 using FastOutSlowInEasing
-                                0.97f at 260
-                                1f at 400
-                            },
-                        )
-                    }
-                    launch {
-                        scaleY.animateTo(
-                            targetValue = 1f,
-                            animationSpec = keyframes {
-                                durationMillis = 400
-                                0.95f at 120 using FastOutSlowInEasing
-                                1.03f at 260
-                                1f at 400
-                            },
-                        )
-                    }
-                }
-            }
-    }
-
-    return this.graphicsLayer {
-        this.scaleX = scaleX.value
-        this.scaleY = scaleY.value
-    }
-}

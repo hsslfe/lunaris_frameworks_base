@@ -47,6 +47,11 @@ class AxDynamicBarSettings @Inject constructor(
 
     private val contentResolver = context.contentResolver
 
+    private val _nowBarAppearance =
+        MutableStateFlow(AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId))
+    val nowBarAppearance: StateFlow<AxLockscreenNowBarSettings> =
+        _nowBarAppearance.asStateFlow()
+
     private val _isEnabled = MutableStateFlow(false)
     @get:JvmName("getIsEnabled") val isEnabled: StateFlow<Boolean> = _isEnabled.asStateFlow()
 
@@ -159,6 +164,11 @@ class AxDynamicBarSettings @Inject constructor(
             settingsObserver,
             UserHandle.USER_ALL,
         )
+        for (key in AxLockscreenNowBarSettings.KEYS) {
+            contentResolver.registerContentObserver(
+                Settings.System.getUriFor(key), false, settingsObserver, UserHandle.USER_ALL,
+            )
+        }
         secureSettings.registerContentObserverForUserSync(
             KEY_COMPACT_NOTIFICATIONS,
             false,
@@ -182,6 +192,8 @@ class AxDynamicBarSettings @Inject constructor(
     }
 
     private fun refresh() {
+        _nowBarAppearance.value =
+            AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId)
         if (secureSettings.getStringForUser(KEY_KEYGUARD_ENABLED, UserHandle.USER_CURRENT) == null) {
             val wasEnabled =
                 secureSettings.getIntForUser(KEY_ENABLED, 0, UserHandle.USER_CURRENT) == 1 &&
@@ -259,7 +271,8 @@ class AxDynamicBarSettings @Inject constructor(
             "notification" !in _keyguardDisabledEventTypes.value
 
     val isKeyguardColorOsActive: Boolean
-        get() = _isKeyguardEnabled.value && _isKeyguardColorOsStyleEnabled.value
+        get() = _isKeyguardEnabled.value && _isKeyguardColorOsStyleEnabled.value &&
+            !_nowBarAppearance.value.enabled
 
     fun shouldSuppressHeadsUp(notification: StatusBarNotification): Boolean {
         if (CallNotificationInfo.from(notification) != null) {

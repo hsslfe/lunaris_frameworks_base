@@ -111,15 +111,24 @@ constructor(
     override fun bindData(constraintLayout: ConstraintLayout) {
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
-        indicationController.setSuppressIndication(viewModel.shouldSuppressKeyguardIndication.value)
+        val nowBarEnabled = viewModel.nowBarAppearance.value.enabled
+        val pillVisible = viewModel.isLockscreenPillActivityVisible.value
+        indicationController.setSuppressIndication(pillVisible || (!nowBarEnabled && viewModel.shouldSuppressKeyguardIndication.value))
+        indicationController.setSuppressNowBarIndications(pillVisible)
 
         composeView.setContent { PlatformTheme { AxDynamicBarKeyguardChip(viewModel = viewModel) } }
 
         bindHandle =
             composeView.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
-                    viewModel.shouldSuppressKeyguardIndication.collect {
-                        indicationController.setSuppressIndication(it)
+                    launch {
+                        combine(viewModel.shouldSuppressKeyguardIndication, viewModel.nowBarAppearance,
+                            viewModel.isLockscreenPillActivityVisible) { legacy, style, visible ->
+                            visible || (!style.enabled && legacy)
+                        }.distinctUntilChanged().collect { indicationController.setSuppressIndication(it) }
+                    }
+                    viewModel.isLockscreenPillActivityVisible.collect {
+                        indicationController.setSuppressNowBarIndications(it)
                     }
                 }
             }
@@ -132,6 +141,8 @@ constructor(
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
                                 expandedExitPending = false
+                                rebindPreDrawAction(constraintLayout, false)
+                                MediaViewController.getOrNull()?.setExpandedMusicOpen(false)
                                 WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
@@ -156,9 +167,17 @@ constructor(
                         ) { expanded, event -> expanded && event is IslandEvent.Media }
                             .distinctUntilChanged()
                             .collect { expandedMusicOpen ->
-                                com.android.systemui.media.MediaViewController.getOrNull()
-                                    ?.setExpandedMusicOpen(expandedMusicOpen)
+                                if (expandedMusicOpen || !expandedExitPending) {
+                                    MediaViewController.getOrNull()?.setExpandedMusicOpen(expandedMusicOpen)
+                                }
                             }
+                    }
+                    scope.launch {
+                        combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps, viewModel.nowBarAppearance) { expanded, lowUdfps, style ->
+                            Triple(expanded, lowUdfps, if (style.enabled) style.raise else 0)
+                        }.distinctUntilChanged().collect { (expanded, lowUdfps, _) ->
+                            if (!expanded && !expandedExitPending) applyCollapsedLp(composeView, lowUdfps)
+                        }
                     }
                     combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps) { expanded, lowUdfps
                             ->
@@ -174,6 +193,11 @@ constructor(
                         }
                 }
             }
+    }
+
+    private fun collapsedBottomMarginPx(): Int {
+        val style = viewModel.nowBarAppearance.value
+        return extraBottomMarginPx(context) + if (style.enabled) style.raise.toFloat().dpToPx(context) else 0
     }
 
     private fun onExpandedStateChanged(
@@ -195,7 +219,9 @@ constructor(
                 if (!viewModel.isKeyguardExpanded.value) scrim.visibility = View.GONE
             }.start()
         }
-        rebindPreDrawAction(constraintLayout, expanded)
+        if (expanded || !expandedExitPending || !viewModel.keyguardExpansion.canShow.value) {
+            rebindPreDrawAction(constraintLayout, expanded)
+        }
         TransitionManager.endTransitions(constraintLayout)
         if (!expanded && (!expandedExitPending || !viewModel.keyguardExpansion.canShow.value)) {
             expandedExitPending = false
@@ -271,11 +297,11 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        val expanded = viewModel.isKeyguardExpanded.value
+        val expanded = viewModel.isKeyguardExpanded.value || expandedExitPending
         val lowUdfps = viewModel.isLowUdfps.value
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         val chipAboveLockPx = CHIP_ABOVE_LOCK_MARGIN_DP.dpToPx(context)
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         constraintSet.apply {
             constrainWidth(dismissViewId, ConstraintSet.MATCH_CONSTRAINT)
@@ -387,7 +413,7 @@ constructor(
 
     private fun applyCollapsedLp(composeView: View, lowUdfps: Boolean) {
         val lp = composeView.layoutParams as ConstraintLayout.LayoutParams
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.topMargin = 0
@@ -425,6 +451,7 @@ constructor(
         expansionHandle = null
         bindHandle?.dispose()
         bindHandle = null
+        indicationController.setSuppressNowBarIndications(false)
         indicationController.setSuppressIndication(false)
         setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         constraintLayout.removeView(dismissViewId)

@@ -333,15 +333,14 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
     }
 
     val hasExpandableEvents = chipState?.allEvents?.any { it !is IslandEvent.AospChip } == true
-    LaunchedEffect(hasExpandableEvents, isExpanded) {
-        if (!hasExpandableEvents && isExpanded) {
-            viewModel.statusBarExpansion.collapse()
-        }
+    val lastExpandedState = remember { mutableStateOf<AxDynamicBarChipState?>(null) }
+    LaunchedEffect(isExpanded, chipState, hasExpandableEvents) {
+        if (isExpanded && hasExpandableEvents) lastExpandedState.value = chipState
     }
 
     val origin = TransformOrigin(0.5f, 0f)
 
-    ChipMorphContainer(visible = isExpanded, chipBounds = chipBounds) { contentModifier ->
+    ChipMorphContainer(visible = isExpanded, chipBounds = chipBounds, onHidden = { lastExpandedState.value = null }) { contentModifier ->
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -390,7 +389,7 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
                 .padding(top = topPad),
             contentAlignment = Alignment.TopCenter,
         ) {
-            chipState?.let { state ->
+            (if (isExpanded && hasExpandableEvents) chipState else lastExpandedState.value)?.let { state ->
                 val filtered = state.allEvents.filter { it !is IslandEvent.AospChip }
                 if (filtered.isEmpty()) return@let
                 Box(
@@ -456,6 +455,7 @@ private const val MORPH_FALLBACK_SCALE = 0.4f
 private fun ChipMorphContainer(
     visible: Boolean,
     chipBounds: Rect?,
+    onHidden: () -> Unit,
     content: @Composable (Modifier) -> Unit,
 ) {
     val view = LocalView.current
@@ -514,7 +514,10 @@ private fun ChipMorphContainer(
             }
     }
 
-    if (!visible && alpha.value == 0f) return
+    if (!visible && alpha.value == 0f) {
+        LaunchedEffect(Unit) { onHidden() }
+        return
+    }
 
     DisposableEffect(Unit) { onDispose { panelBounds = null } }
     content(morphModifier)

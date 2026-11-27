@@ -295,7 +295,7 @@ constructor(
     @Volatile private var ringerListening = false
     @Volatile private var clipboardListening = false
 
-    var persistWhilePluggedIn = false
+    @Volatile var persistWhilePluggedIn = false
 
     private val pluggedIn = callbackFlow {
         val callback = object : BatteryController.BatteryStateChangeCallback {

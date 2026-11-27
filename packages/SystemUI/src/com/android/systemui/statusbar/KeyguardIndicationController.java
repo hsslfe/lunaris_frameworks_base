@@ -76,6 +76,8 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.text.format.Formatter;
 import android.text.style.ImageSpan;
 import android.util.Pair;
@@ -188,6 +190,16 @@ public class KeyguardIndicationController {
     private FaceUnlockImageView mFaceIconView;
     private KeyguardIndicationTextView mTopIndicationView;
     private KeyguardIndicationTextView mLockScreenIndicationView;
+    // Observe the actual text, not queued indications: the compact Now Bar
+    // battery pill must yield only while an indication is on screen.
+    private final List<LockScreenTextListener> mLockScreenTextListeners = new ArrayList<>();
+    private final TextWatcher mLockScreenTextWatcher = new TextWatcher() {
+        @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+        @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+        @Override public void afterTextChanged(Editable s) {
+            notifyLockScreenTextListeners();
+        }
+    };
     private final IBatteryStats mBatteryInfo;
     private final SettableWakeLock mWakeLock;
     private final DockManager mDockManager;
@@ -223,6 +235,7 @@ public class KeyguardIndicationController {
     private ColorStateList mInitialTextColorState;
     private boolean mVisible;
     private boolean mSuppressIndication;
+    private boolean mSuppressNowBarIndications;
     private boolean mOrganizationOwnedDevice;
 
     // these all assume the device is plugged in (wired/wireless/docked) AND chargingOrFull:
@@ -327,6 +340,35 @@ public class KeyguardIndicationController {
 
     public interface IndicationListener {
         void onIndicationUpdated(int type, @Nullable CharSequence text);
+    }
+
+    /** A change to the currently displayed bottom lock-screen text. */
+    public interface LockScreenTextListener {
+        void onLockScreenTextVisibilityChanged(boolean hasVisibleText);
+    }
+
+    public boolean hasVisibleLockScreenText() {
+        return mVisible && !mDozing && !mSuppressIndication
+                && mLockScreenIndicationView != null
+                && mLockScreenIndicationView.getVisibility() == View.VISIBLE
+                && !TextUtils.isEmpty(mLockScreenIndicationView.getText());
+    }
+
+    public void addLockScreenTextListener(LockScreenTextListener listener) {
+        mLockScreenTextListeners.add(listener);
+        listener.onLockScreenTextVisibilityChanged(hasVisibleLockScreenText());
+    }
+
+    public void removeLockScreenTextListener(LockScreenTextListener listener) {
+        mLockScreenTextListeners.remove(listener);
+    }
+
+    private void notifyLockScreenTextListeners() {
+        if (mLockScreenTextListeners.isEmpty()) return;
+        final boolean hasText = hasVisibleLockScreenText();
+        for (LockScreenTextListener listener : new ArrayList<>(mLockScreenTextListeners)) {
+            listener.onLockScreenTextVisibilityChanged(hasText);
+        }
     }
     public static final int AX_TYPE_BIOMETRIC = 0;
     public static final int AX_TYPE_TRANSIENT = 1;
@@ -507,10 +549,22 @@ public class KeyguardIndicationController {
     }
 
     public void setIndicationArea(ViewGroup indicationArea) {
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.removeTextChangedListener(mLockScreenTextWatcher);
+        }
         mIndicationArea = indicationArea;
         mTopIndicationView = indicationArea.findViewById(R.id.keyguard_indication_text);
         mLockScreenIndicationView = indicationArea.findViewById(
                 R.id.keyguard_indication_text_bottom);
+        // The indication area may be rebound after Now Bar has already hidden
+        // bottom hints. Apply the current suppression to the new text views
+        // before any message or visibility update can make them appear.
+        if (mTopIndicationView != null) {
+            mTopIndicationView.setSuppressVisibility(mSuppressIndication);
+        }
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.setSuppressVisibility(mSuppressIndication);
+        }
         if (Flags.indicationTextA11yFix()) {
             setIndicationColorToThemeColor();
         } else {
@@ -526,7 +580,11 @@ public class KeyguardIndicationController {
                 mStatusBarStateController,
                 mKeyguardLogger
         );
+        if (mLockScreenIndicationView != null) {
+            mLockScreenIndicationView.addTextChangedListener(mLockScreenTextWatcher);
+        }
         updateDeviceEntryIndication(false /* animate */);
+        notifyLockScreenTextListeners();
         updateOrganizedOwnedDevice();
         if (mBroadcastReceiver == null) {
             // Update the disclosure proactively to avoid IPC on the critical path.
@@ -574,6 +632,7 @@ public class KeyguardIndicationController {
     public String getPowerChargingString() {
         return computePowerChargingStringIndication();
     }
+
 
     private void handleAlignStateChanged(int alignState) {
         String alignmentIndication = "";
@@ -744,13 +803,18 @@ public class KeyguardIndicationController {
             }
 
             mKeyguardLogger.logUpdateBatteryIndication(powerIndication, mPowerPluggedIn);
-            mRotateTextViewController.updateIndication(
-                    INDICATION_TYPE_BATTERY,
-                    new KeyguardIndication.Builder()
-                            .setMessage(powerIndication)
-                            .setTextColor(getInitialTextColorState())
-                            .build(),
-                    animate);
+            if (mSuppressNowBarIndications && !mEnableBatteryDefender && !mIncompatibleCharger) {
+                mRotateTextViewController.hideIndication(INDICATION_TYPE_BATTERY);
+            } else {
+                mRotateTextViewController.updateIndication(
+                        INDICATION_TYPE_BATTERY,
+                        new KeyguardIndication.Builder()
+                                .setMessage(powerIndication)
+                                .setTextColor(getInitialTextColorState())
+                                .build(),
+                        animate);
+            }
+            // Keep charging information available to Now Bar and other consumers.
             notifyIndicationListeners(AX_TYPE_BATTERY, powerIndication);
         } else {
             mKeyguardLogger.log(TAG, LogLevel.DEBUG, "hide battery indication");
@@ -1003,6 +1067,21 @@ public class KeyguardIndicationController {
         return UserHandle.USER_NULL;
     }
 
+    /** Suppress only redundant charging text and the shortcut hint while Now Bar is visible. */
+    public void setSuppressNowBarIndications(boolean suppress) {
+        if (mSuppressNowBarIndications == suppress) {
+            return;
+        }
+        mSuppressNowBarIndications = suppress;
+        if (suppress && TextUtils.equals(mTransientIndication,
+                mContext.getString(R.string.keyguard_affordance_press_too_short))) {
+            hideTransientIndication();
+        }
+        if (mVisible && mRotateTextViewController != null) {
+            updateDeviceEntryIndication(false);
+        }
+    }
+
     public void setSuppressIndication(boolean suppress) {
         mSuppressIndication = suppress;
         if (mTopIndicationView != null) {
@@ -1014,6 +1093,7 @@ public class KeyguardIndicationController {
         if (!suppress && mVisible) {
             updateDeviceEntryIndication(false);
         }
+        notifyLockScreenTextListeners();
     }
 
     /**
@@ -1035,6 +1115,7 @@ public class KeyguardIndicationController {
             // If we unlock and return to keyguard quickly, previous error should not be shown
             hideTransientIndication();
         }
+        notifyLockScreenTextListeners();
     }
 
     private void setPersistentUnlockMessage(String persistentUnlockMessage) {
@@ -1089,6 +1170,10 @@ public class KeyguardIndicationController {
      * Shows {@param transientIndication} until it is hidden by {@link #hideTransientIndication}.
      */
     public void showTransientIndication(int transientIndication) {
+        if (mSuppressNowBarIndications
+                && transientIndication == R.string.keyguard_affordance_press_too_short) {
+            return;
+        }
         showTransientIndication(mContext.getResources().getString(transientIndication));
     }
 
@@ -1269,7 +1354,10 @@ public class KeyguardIndicationController {
                 mIndicationArea.setVisibility(GONE);
                 return;
             } else if (mPowerPluggedIn || mEnableBatteryDefender) {
-                newIndication = computePowerIndication();
+                if (!mSuppressNowBarIndications || mEnableBatteryDefender
+                        || mIncompatibleCharger) {
+                    newIndication = computePowerIndication();
+                }
             } else {
                 String batteryLevel = NumberFormat.getPercentInstance().format(mBatteryLevel / 100f);
                 String batteryTemp = com.android.internal.util.lunaris.ThemeUtils.batteryTemperature(mContext, false);
