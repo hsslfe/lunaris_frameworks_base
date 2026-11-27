@@ -563,6 +563,7 @@ public final class NotificationPanelViewController implements
     private float mMinExpandHeight;
     private boolean mPanelUpdateWhenAnimatorEnds;
     private boolean mHasVibratedOnOpen = false;
+    private int mColorOsMediaSwipeHeight;
     private int mFixedDuration = NO_FIXED_DURATION;
     /** Unresisted distance, in pixels, used by the scene shade's overscroll spring. */
     private float mShadeOverscroll;
@@ -2001,6 +2002,9 @@ public final class NotificationPanelViewController implements
     }
 
     int getMaxPanelHeight() {
+        if (isColorOsMediaSwipeInProgress()) {
+            return mColorOsMediaSwipeHeight;
+        }
         int min = mStatusBarMinHeight;
         if (!(mBarState == KEYGUARD)
                 && mNotificationStackScrollLayoutController.getNotGoneChildCount() == 0) {
@@ -2027,6 +2031,29 @@ public final class NotificationPanelViewController implements
                     + ", mQsMinExpansionHeight = " + mQsController.getMinExpansionHeight());
         }
         return maxHeight;
+    }
+
+    private boolean isColorOsMediaSwipeInProgress() {
+        return mColorOsMediaSwipeHeight > 0 && mBarState == KEYGUARD
+                && isTracking() && mAmbientState.isSwipingUp()
+                && !mQsController.getExpanded() && !mQsController.isExpandImmediate();
+    }
+
+    private void captureColorOsMediaSwipeHeight(boolean swipingUp) {
+        if (!swipingUp || mColorOsMediaSwipeHeight > 0 || mBarState != KEYGUARD
+                || !isTracking() || mDozing || mQsController.getExpanded()
+                || mQsController.isExpandImmediate() || !mMediaDataManager.hasActiveMedia()) {
+            return;
+        }
+        com.android.systemui.axdynamicbar.ui.AxDynamicBarColorOsController controller =
+                com.android.systemui.axdynamicbar.ui.AxDynamicBarColorOsController.getOrNull();
+        if (controller != null && controller.isStackRevealed()) {
+            // A revealed media card can change the intrinsic stack height as its
+            // layout reacts to panel expansion. Keep the unlock drag's denominator
+            // stable until release, instead of feeding that measurement back into
+            // the next expansion fraction while the finger is held still.
+            mColorOsMediaSwipeHeight = getMaxPanelHeight();
+        }
     }
 
     public boolean isExpandingOrCollapsing() {
@@ -2064,7 +2091,10 @@ public final class NotificationPanelViewController implements
             // a stack overflow.
             if (mStackScrollerMeasuringPass > 2) {
                 debugLog("Unstable notification panel height. Aborting.");
-            } else {
+            } else if (!isColorOsMediaSwipeInProgress()) {
+                // The ordinary clock/stack layout resumes with the release fling.
+                // Repositioning it during the held media swipe can restart the
+                // very measurement feedback that the stable height prevents.
                 positionClockAndNotifications();
             }
         }
@@ -2314,6 +2344,7 @@ public final class NotificationPanelViewController implements
     }
 
     private void onTrackingStopped(boolean expand) {
+        mColorOsMediaSwipeHeight = 0;
         mShadeRepository.setLegacyShadeTracking(false);
 
         updateExpansionAndVisibility();
@@ -3146,6 +3177,7 @@ public final class NotificationPanelViewController implements
         mTrackingPointer = -1;
         mStatusBarLongPressDowntime = -1L;
         mAmbientState.setSwipingUp(false);
+        mColorOsMediaSwipeHeight = 0;
         if ((isTracking() && mTouchSlopExceeded) || Math.abs(x - mInitialExpandX) > mTouchSlop
                 || Math.abs(y - mInitialExpandY) > mTouchSlop
                 || (!isFullyExpanded() && !isFullyCollapsed())
@@ -4571,6 +4603,7 @@ public final class NotificationPanelViewController implements
                         mQsController.updateGestureInsetsCache();
                     }
                     mShadeLog.logMotionEvent(event, "onTouch: down action");
+                    mColorOsMediaSwipeHeight = 0;
                     startExpandMotion(x, y, false /* startTracking */,
                             mExpandedHeight + Math.max(0f, mShadeOverscroll));
                     mMinExpandHeight = 0.0f;
@@ -4686,6 +4719,7 @@ public final class NotificationPanelViewController implements
                         // Count h==0 as part of swipe-up,
                         // otherwise {@link NotificationStackScrollLayout}
                         // wrongly enables stack height updates at the start of lockscreen swipe-up
+                        captureColorOsMediaSwipeHeight(h <= 0);
                         mAmbientState.setSwipingUp(h <= 0);
                         stopHeightAnimator();
                         if (mBarState == SHADE && !mDozing) {
