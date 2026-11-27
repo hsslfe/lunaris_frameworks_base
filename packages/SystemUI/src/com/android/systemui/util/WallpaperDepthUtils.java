@@ -52,7 +52,6 @@ import android.widget.FrameLayout;
 
 import com.android.systemui.Dependency;
 import com.android.systemui.broadcast.BroadcastDispatcher;
-import com.android.systemui.keyguard.ui.view.KeyguardRootView;
 import com.android.systemui.media.MediaViewController;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
@@ -84,8 +83,6 @@ public class WallpaperDepthUtils {
     private FrameLayout mLockScreenBackground;
     private FrameLayout mLockScreenSubject;
     private final FrameLayout mSubjectContainer;
-    private KeyguardRootView mKeyguardRoot;
-    private FrameLayout mKeyguardSubjectContainer;
 
     private final Context mContext;
     private final ScrimController mScrimController;
@@ -507,27 +504,11 @@ public class WallpaperDepthUtils {
         return mSubjectContainer;
     }
 
-    public void setKeyguardRoot(KeyguardRootView root) {
-        mKeyguardRoot = root;
-        mKeyguardSubjectContainer = root.findViewById(R.id.keyguard_depth_wallpaper_subject);
-    }
-
     public void setSubjectBehindShade(boolean behindShade) {
         float translationZ = behindShade ? -100f : 0f;
         if (mSubjectContainer.getTranslationZ() != translationZ) {
             mSubjectContainer.setTranslationZ(translationZ);
-            mSubjectContainer.post(() -> placeSubject(
-                    mLockScreenSubject.getVisibility() == View.VISIBLE && canShowDepthWallpaper()));
-        }
-    }
-
-    private void placeSubject(boolean showDepth) {
-        boolean inKeyguard = showDepth && mKeyguardSubjectContainer != null
-                && mSubjectContainer.getTranslationZ() == 0f;
-        FrameLayout target = inKeyguard ? mKeyguardSubjectContainer : mSubjectContainer;
-        if (mLockScreenSubject.getParent() != target) {
-            ((ViewGroup) mLockScreenSubject.getParent()).removeView(mLockScreenSubject);
-            target.addView(mLockScreenSubject);
+            updateDepthWallpaperVisibility();
         }
     }
 
@@ -641,7 +622,6 @@ public class WallpaperDepthUtils {
             }
             boolean showDepth = canShowDepthWallpaper();
             boolean showAmbient = canShowAmbientWallpaper();
-            placeSubject(showDepth);
             if (mShowingAmbientWallpaper != showAmbient) {
                 if (showAmbient) {
                     mLockScreenSubject.setAlpha(1f);
@@ -677,8 +657,6 @@ public class WallpaperDepthUtils {
 
         mLockScreenSubject.post(() -> {
             mLockScreenSubject.setVisibility(View.GONE);
-            placeSubject(false);
-
             if (mLockScreenBackground != null) {
                 mLockScreenBackground.setVisibility(View.GONE);
             }
@@ -704,7 +682,6 @@ public class WallpaperDepthUtils {
                     .setDuration(120)
                     .withEndAction(() -> {
                         mLockScreenSubject.setVisibility(View.GONE);
-                        placeSubject(false);
                         mLockScreenSubject.setAlpha(1f);
 
                         if (mLockScreenBackground != null) {

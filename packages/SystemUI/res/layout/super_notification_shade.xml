@@ -63,17 +63,7 @@
         android:id="@id/keyguard_root_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:clipChildren="false">
-
-        <FrameLayout
-            android:id="@+id/keyguard_depth_wallpaper_subject"
-            android:elevation="1.5px"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipChildren="false"
-            android:clipToPadding="false"
-            android:importantForAccessibility="no" />
-    </com.android.systemui.keyguard.ui.view.KeyguardRootView>
+        android:clipChildren="false" />
 
     <!-- Shared container for the notification stack. Can be positioned by either
          the keyguard_root_view or notification_panel -->

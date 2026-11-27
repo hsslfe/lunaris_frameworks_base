@@ -161,7 +161,6 @@ import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.ScreenLifecycle;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
-import com.android.systemui.keyguard.ui.view.KeyguardRootView;
 import com.android.systemui.media.MediaViewController;
 import com.android.systemui.media.NotificationMediaManager;
 import com.android.systemui.navigationbar.NavigationBarController;
@@ -1456,16 +1455,13 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
             mScrimController.attachViews(scrimBehind, notificationsScrim, scrimInFront);
         }
 
-        // Keep the ambient subject at shade level. The awake subject uses the keyguard layer.
+        // Draw the subject above the entire keyguard root, below the notification stack.
         ViewGroup root = getNotificationShadeWindowView();
         View depthWallpaperView = mWallpaperDepthUtils.getDepthWallpaperView();
         if (depthWallpaperView.getParent() == null) {
             root.setClipChildren(false);
             root.setClipToPadding(false);
-            KeyguardRootView keyguardRootView = root.findViewById(R.id.keyguard_root_view);
-            if (keyguardRootView != null) {
-                mWallpaperDepthUtils.setKeyguardRoot(keyguardRootView);
-            }
+            View keyguardRootView = root.findViewById(R.id.keyguard_root_view);
             int insertIndex = root.indexOfChild(keyguardRootView) + 1;
             root.addView(depthWallpaperView, insertIndex);
         }
