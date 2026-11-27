@@ -80,6 +80,7 @@ internal fun LunarisBarPopupMotion(
     fastEnter: Boolean = false,
     useRedesignedMediaBackground: Boolean = false,
     allowOutsideInteraction: Boolean = false,
+    pageScale: () -> Float = { 1f },
     notificationChipId: PopupChipId? = null,
     chipId: PopupChipId? = notificationChipId,
     compactOrigin: Boolean = false,
@@ -107,6 +108,7 @@ internal fun LunarisBarPopupMotion(
             fastEnter,
             useRedesignedMediaBackground,
             allowOutsideInteraction,
+            pageScale = pageScale,
             secondaryContent = secondaryContent,
             swipe = swipe,
             content = content,
@@ -129,6 +131,7 @@ internal fun LunarisBarPopupMotion(
             fastEnter = fastEnter,
             useRedesignedMediaBackground = useRedesignedMediaBackground,
             allowOutsideInteraction = allowOutsideInteraction,
+            pageScale = pageScale,
             secondaryContent = secondaryContent,
             swipe = swipe,
             content = content,
@@ -550,7 +553,7 @@ internal fun LunarisBarPopupMotion(
                 blurAlpha = if (notification) surfaceAlpha else 1f,
                 background =
                     if (useRedesignedMediaBackground) {
-                        { RedesignedMediaPopupBackground(shape) }
+                        { PagingMediaPopupBackground(shape) }
                     } else null,
             ) {}
             Box(if (contentAlpha < 0.5f) Modifier.clearAndSetSemantics {} else Modifier) {
@@ -592,9 +595,20 @@ internal fun LunarisBarPopupMotion(
                     maxHeight = (maxHeight - card.height - gap).coerceAtLeast(0),
                 )
             )
+        // Keep the newer Original and notification geometry paths intact.
+        val fullyOpen = !original && !notification && isVisible &&
+            widthProgress.value == 1f && heightProgress.value == 1f
+        val surfaceWidth = if (fullyOpen) card.width.toFloat() else w
+        val surfaceHeight = if (fullyOpen) card.height.toFloat() else h
+        val surfaceLeft = if (fullyOpen) {
+            lunarisBarPopupLeft(origin.center.x, surfaceWidth, constraints.maxWidth.toFloat(), margin.toFloat())
+        } else x
         val background =
             measurables[0].measure(
-                Constraints.fixed(w.roundToInt().coerceAtLeast(1), h.roundToInt().coerceAtLeast(1))
+                Constraints.fixed(
+                    surfaceWidth.roundToInt().coerceAtLeast(1),
+                    surfaceHeight.roundToInt().coerceAtLeast(1),
+                )
             )
         val secondaryLeft =
             lunarisBarPopupLeft(
@@ -613,21 +627,29 @@ internal fun LunarisBarPopupMotion(
             )
         layout(constraints.maxWidth, constraints.maxHeight) {
             if (surfaceAlpha > 0f) {
-                background.placeWithLayer(x.roundToInt(), y.roundToInt()) {
+                background.placeWithLayer(surfaceLeft.roundToInt(), y.roundToInt()) {
+                    val swipeScale = pageScale()
                     this.alpha = surfaceAlpha
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    val squishY = 1f - (1f - swipeScale) * 1.65f
+                    translationX = (1f - swipeScale) * surfaceWidth / 2f
+                    scaleX = swipeScale
+                    scaleY = squishY
                     if (original) {
-                        transformOrigin = TransformOrigin(0f, 0f)
-                        translationX = x - x.roundToInt()
+                        translationX += x - x.roundToInt()
                         translationY = y - y.roundToInt()
-                        scaleX = w / background.width.coerceAtLeast(1)
-                        scaleY = h / background.height.coerceAtLeast(1)
+                        scaleX *= w / background.width.coerceAtLeast(1)
+                        scaleY *= h / background.height.coerceAtLeast(1)
                     }
                 }
             }
-            card.placeWithLayer(x.roundToInt(), y.roundToInt()) {
+            card.placeWithLayer(surfaceLeft.roundToInt(), y.roundToInt()) {
+                val swipeScale = pageScale()
+                val squishY = 1f - (1f - swipeScale) * 1.65f
                 transformOrigin = TransformOrigin(0f, 0f)
+                translationX = (1f - swipeScale) * surfaceWidth / 2f
                 if (original) {
-                    translationX = x - x.roundToInt()
+                    translationX += x - x.roundToInt()
                     translationY = y - y.roundToInt()
                 }
                 this.alpha = contentAlpha
@@ -641,9 +663,9 @@ internal fun LunarisBarPopupMotion(
                             ): Outline = shape.createOutline(Size(w, h), layoutDirection, density)
                         }
                 } else {
-                    scaleX = w / card.width.coerceAtLeast(1)
-                    scaleY = h / card.height.coerceAtLeast(1)
-                    this.shape = lunarisBarScaledShape(shape, w, h)
+                    scaleX = swipeScale * surfaceWidth / card.width.coerceAtLeast(1)
+                    scaleY = squishY * surfaceHeight / card.height.coerceAtLeast(1)
+                    this.shape = lunarisBarScaledShape(shape, surfaceWidth, surfaceHeight)
                 }
                 clip = true
             }
