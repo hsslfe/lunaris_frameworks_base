@@ -6,6 +6,12 @@ import com.android.systemui.statusbar.chips.ui.model.OngoingActivityChipModel
 import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
 import android.view.View
+import android.view.HapticFeedbackConstants
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.axion.blur.AxBlurBackgroundRenderer
@@ -218,6 +224,8 @@ fun IndependentNowBarChip(
     val keyguardBatteryChipMode by viewModel.keyguardBatteryChipMode.collectAsStateWithLifecycle()
     val batteryInfo by viewModel.keyguardBatteryInfo.collectAsStateWithLifecycle()
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
+    val isKeyguardColorOsActive by viewModel.isKeyguardColorOsActive.collectAsStateWithLifecycle()
+    val isKeyguardColorOsRevealed by viewModel.isKeyguardColorOsRevealed.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
@@ -278,6 +286,55 @@ fun IndependentNowBarChip(
             }
         }
 
+        val impactScaleX = remember { Animatable(1f) }
+        val impactScaleY = remember { Animatable(1f) }
+        val impactOffsetYDp = remember { Animatable(0f) }
+        var wasColorOsRevealed by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isKeyguardColorOsRevealed, isKeyguardColorOsActive, isKeyguardChipVisible) {
+            val justCollapsed = wasColorOsRevealed && !isKeyguardColorOsRevealed
+            wasColorOsRevealed = isKeyguardColorOsRevealed
+            if (justCollapsed && isKeyguardColorOsActive && isKeyguardChipVisible) {
+                delay(155L)
+                coroutineScope {
+                    launch {
+                        impactScaleX.animateTo(
+                            targetValue = 1.09f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactScaleX.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.44f, stiffness = 420f),
+                        )
+                    }
+                    launch {
+                        impactScaleY.animateTo(
+                            targetValue = 0.87f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactScaleY.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(dampingRatio = 0.44f, stiffness = 420f),
+                        )
+                    }
+                    launch {
+                        impactOffsetYDp.animateTo(
+                            targetValue = 3f,
+                            animationSpec = tween(durationMillis = 75, easing = FastOutSlowInEasing),
+                        )
+                        impactOffsetYDp.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(dampingRatio = 0.46f, stiffness = 400f),
+                        )
+                    }
+                }
+            } else if (isKeyguardColorOsRevealed || !isKeyguardColorOsActive || !isKeyguardChipVisible) {
+                impactScaleX.snapTo(1f)
+                impactScaleY.snapTo(1f)
+                impactOffsetYDp.snapTo(0f)
+            }
+        }
+
         // Remove the pill from composition before its native host
         // changes from wrap-content to full height. AnimatedVisibility with
         // ExitTransition.None alone can retain a frame in the wrong location.
@@ -285,15 +342,34 @@ fun IndependentNowBarChip(
             !expandedVisibleState.currentState) {
         val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
         val pillVisibility = remember { MutableTransitionState(false) }
-        pillVisibility.targetState = isKeyguardChipVisible
+        pillVisibility.targetState = isKeyguardChipVisible && !isKeyguardColorOsRevealed
         AnimatedVisibility(
             visibleState = pillVisibility,
-            enter = if (showIdleBatteryOnly) EnterTransition.None else
-                fadeIn(tween(110)) + scaleIn(initialScale = 0.86f,
-                    animationSpec = spring(dampingRatio = 0.69f, stiffness = 700f)),
-            exit = ExitTransition.None,
+            enter = when {
+                showIdleBatteryOnly -> EnterTransition.None
+                isKeyguardColorOsActive -> fadeIn(tween(140, delayMillis = 130)) +
+                    scaleIn(initialScale = 0.92f, animationSpec = tween(130, delayMillis = 130))
+                else -> fadeIn(tween(110)) + scaleIn(initialScale = 0.86f,
+                    animationSpec = spring(dampingRatio = 0.69f, stiffness = 700f))
+            },
+            exit = if (isKeyguardColorOsActive && isKeyguardColorOsRevealed)
+                fadeOut(tween(90)) + scaleOut(targetScale = 0.94f, animationSpec = tween(110))
+            else ExitTransition.None,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .onGloballyPositioned { coords ->
+                    if (isKeyguardColorOsActive && !isKeyguardColorOsRevealed && hasNowBarActivity) {
+                        val bounds = coords.boundsInWindow()
+                        if (bounds.width > 0f && bounds.height > 0f) {
+                            viewModel.colorOsController.updatePillAnchorRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        }
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = impactScaleX.value
+                    scaleY = impactScaleY.value
+                    translationY = impactOffsetYDp.value.dp.toPx()
+                }
                 .pointerInput(viewModel, state?.event?.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial)
@@ -486,7 +562,10 @@ private fun KeyguardChipBody(
     val pressInteractionSource = remember { MutableInteractionSource() }
     val isPillPressed by pressInteractionSource.collectIsPressedAsState()
     val onPillClick: () -> Unit = {
-        when (event) {
+        if (viewModel.colorOsController.shouldUseColorOsRevealFor(event)) {
+            popupAnchor.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            viewModel.colorOsController.toggleReveal()
+        } else when (event) {
             is IslandEvent.Notification ->
                 viewModel.launchNotificationFromKeyguard(event)
             is IslandEvent.AospChip ->
@@ -1378,7 +1457,10 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
             else MarqueeText(event.label.ifEmpty { stringResource(R.string.ax_dynamic_bar_timer) }, color, modifier)
         }
         is IslandEvent.Stopwatch -> StopwatchTimeText(event, color, modifier)
-        is IslandEvent.Notification -> MarqueeText(event.title ?: event.appName, color, modifier)
+        is IslandEvent.Notification -> MarqueeText(
+            if (event.isRedacted) event.appName else event.title ?: event.appName,
+            color, modifier,
+        )
         is IslandEvent.Charging -> {
             val parts = rememberChargingParts(batteryString)
             if (parts.size >= 2) {
@@ -1541,7 +1623,7 @@ private fun secondaryTextFor(event: IslandEvent): String? = when (event) {
     is IslandEvent.Call -> event.callerName
     is IslandEvent.BiometricUnlock -> event.sourceName
     is IslandEvent.Notification ->
-        event.text
+        event.text?.takeUnless { event.isRedacted }
             ?.takeIf { it.isNotBlank() }
             ?.takeIfDistinctFrom(event.title, event.appName)
             ?.take(30)

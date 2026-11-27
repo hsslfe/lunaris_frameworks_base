@@ -83,8 +83,9 @@ constructor(
         combine(
             interactor.settings.isKeyguardEnabled,
             interactor.settings.isKeyguardColorOsStyleEnabled,
-        ) { keyguardEnabled, colorOsEnabled ->
-            keyguardEnabled && colorOsEnabled
+            interactor.settings.nowBarAppearance,
+        ) { keyguardEnabled, colorOsEnabled, nowBar ->
+            (keyguardEnabled || nowBar.enabled) && colorOsEnabled
         }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
@@ -96,11 +97,12 @@ constructor(
         combine(
             interactor.uiState,
             interactor.settings.isKeyguardMusicPillEnabled,
-        ) { state, musicPillEnabled ->
+            interactor.settings.nowBarAppearance,
+        ) { state, musicPillEnabled, nowBar ->
             !state.manuallyHidden &&
                 state.events.any { event ->
                     event.hasAssociatedLockscreenNotification() &&
-                        (musicPillEnabled || event !is IslandEvent.Media)
+                        (event !is IslandEvent.Media || if (nowBar.enabled) nowBar.music else musicPillEnabled)
                 }
         }
             .distinctUntilChanged()

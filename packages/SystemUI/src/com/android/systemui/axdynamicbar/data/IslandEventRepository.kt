@@ -52,10 +52,6 @@ constructor(
         if (listenersStarted) refreshChargingListener()
     }
 
-    // A change to Now Bar's options must recompute the existing source events
-    // even if the underlying media/notification objects have not changed.
-    private val settingsRevision = MutableStateFlow(0)
-
     private val _indicationEvents =
         MutableStateFlow<Map<String, IslandEvent.KeyguardIndication>>(emptyMap())
 
@@ -82,7 +78,8 @@ constructor(
         }
 
     private fun isNowBarTypeEnabled(typeId: String): Boolean =
-        settings.nowBarAppearance.value.sourceTypes?.contains(typeId) == true
+        settings.nowBarAppearance.value.sourceTypes?.contains(typeId) == true ||
+            (typeId == "notification" && settings.isNowBarColorOsNotificationEnabled())
 
     private fun isTypeEnabled(typeId: String): Boolean =
         settings.isEventSourceNeeded(typeId) || isNowBarTypeEnabled(typeId)

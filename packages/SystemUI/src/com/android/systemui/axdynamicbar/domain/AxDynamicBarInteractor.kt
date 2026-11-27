@@ -278,8 +278,12 @@ constructor(
                 settings.isKeyguardEnabled,
                 settings.isKeyguardMusicPillEnabled,
                 settings.disabledEventTypes,
-                combine(settings.keyguardDisabledEventTypes, settings.nowBarAppearance.map { it.sourceTypes }.distinctUntilChanged()) { _, sources -> sources },
-            ) { enabled, keyguardEnabled, pillEnabled, _, sources ->
+                combine(
+                    settings.keyguardDisabledEventTypes,
+                    settings.nowBarAppearance.map { it.sourceTypes }.distinctUntilChanged(),
+                    settings.isKeyguardColorOsStyleEnabled,
+                ) { disabled, sources, colorOs -> Triple(disabled, sources, colorOs) },
+            ) { enabled, keyguardEnabled, pillEnabled, _, (_, sources, _) ->
                 Triple(enabled || sources != null, keyguardEnabled, pillEnabled)
             }.collect { (enabled, keyguardEnabled, pillEnabled) ->
                 if (!settings.isNotificationEventsActive()) dismissNotificationAlert()
@@ -313,12 +317,12 @@ constructor(
                 },
                 combine(settings.isKeyguardMusicPillEnabled, _lockscreenPrivacyTick, settings.nowBarAppearance.distinctUntilChangedBy { it.sourceTypes to it.liveApps }) { pill, _, nowBar ->
                     pill to nowBar
-                },
-                _isOnKeyguard,
-            ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar), kg ->
+                }.combine(settings.isKeyguardColorOsStyleEnabled) { pair, colorOs -> Triple(pair.first, pair.second, colorOs) },
+                combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
+            ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar, colorOs), (kg, _) ->
                 raw.filter { e ->
                     if (kg && nowBar.enabled) {
-                        nowBar.shows(e)
+                        nowBar.shows(e) || (colorOs && e is IslandEvent.Notification && settings.isEventEnabled(e, true))
                     } else if (kg && e is IslandEvent.Media) {
                         // The lock screen music pill has its own switch and event source.
                         pillEnabled
@@ -336,7 +340,15 @@ constructor(
                     if (onKeyguard && e is IslandEvent.AppSwitch) return@mapNotNull null
                     if (!onKeyguard && e is IslandEvent.KeyguardIndication) return@mapNotNull null
                     if (onKeyguard && e is IslandEvent.Notification) {
-                        applyKeyguardNotificationPrivacy(e)
+                        applyKeyguardNotificationPrivacy(e)?.let { notification ->
+                            if (settings.nowBarAppearance.value.enabled && notification.isRedacted) {
+                                // A redacted event must not retain conversation text, artwork or actions in the Now Bar UI.
+                                notification.copy(title = null, text = null, senderName = null,
+                                    senderIcon = null, conversationTitle = null, notificationImage = null,
+                                    actions = emptyList(), replyAction = null, isConversation = false,
+                                    isGroupConversation = false)
+                            } else notification
+                        }
                     } else {
                         e
                     }
