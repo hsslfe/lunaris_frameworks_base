@@ -591,9 +591,6 @@ public class WallpaperDepthUtils {
             target.addView(mLockScreenSubject);
             applyWallpaperZoom();
         }
-        if (mKeyguardRoot != null) {
-            mKeyguardRoot.setDepthWallpaperOverClock(inKeyguard);
-        }
     }
 
     private void updateWallpaperZoomListener() {
@@ -744,8 +741,6 @@ public class WallpaperDepthUtils {
         // a visible layer actually needs a different host (AOD or shade).
         if (showDepth || showAmbient || mSubjectContainer.getTranslationZ() != 0f) {
             placeSubject(showDepth);
-        } else if (mKeyguardRoot != null) {
-            mKeyguardRoot.setDepthWallpaperOverClock(false);
         }
         if (mShowingAmbientWallpaper != showAmbient) {
             if (showAmbient) {
@@ -808,7 +803,6 @@ public class WallpaperDepthUtils {
                         if (generation != mVisibilityGeneration) return;
                         mUnlockFadeRunning = false;
                         mLockScreenSubject.setVisibility(View.GONE);
-                        if (mKeyguardRoot != null) mKeyguardRoot.setDepthWallpaperOverClock(false);
                         mLockScreenSubject.setAlpha(1f);
 
                         if (mLockScreenBackground != null) {
@@ -928,9 +922,6 @@ public class WallpaperDepthUtils {
         mLoadedSubjectPath = null;
         mLockScreenSubject.animate().cancel();
         mLockScreenSubject.setVisibility(View.GONE);
-        if (mKeyguardRoot != null) {
-            mKeyguardRoot.setDepthWallpaperOverClock(false);
-        }
         mLockScreenSubject.setAlpha(1f);
         mLockScreenSubject.setBackground(null);
         mLockScreenSubject.setRenderEffect(null);
