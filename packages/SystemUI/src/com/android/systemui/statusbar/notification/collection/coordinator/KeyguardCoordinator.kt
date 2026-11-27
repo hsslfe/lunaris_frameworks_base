@@ -16,6 +16,9 @@
 
 package com.android.systemui.statusbar.notification.collection.coordinator
 
+import android.app.Notification
+import com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings
+import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.notification.collection.NotifPipeline
@@ -25,6 +28,11 @@ import com.android.systemui.statusbar.notification.collection.listbuilder.plugga
 import com.android.systemui.statusbar.notification.collection.provider.SectionHeaderVisibilityProvider
 import com.android.systemui.statusbar.notification.interruption.KeyguardNotificationVisibilityProvider
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 /**
  * Filters low priority and privacy-sensitive notifications from the lockscreen, and hides section
@@ -38,6 +46,8 @@ constructor(
     private val keyguardNotificationVisibilityProvider: KeyguardNotificationVisibilityProvider,
     private val sectionHeaderVisibilityProvider: SectionHeaderVisibilityProvider,
     private val statusBarStateController: StatusBarStateController,
+    private val nowBarSettings: AxDynamicBarSettings,
+    @Application private val applicationScope: CoroutineScope,
 ) : Coordinator {
 
     override fun attach(pipeline: NotifPipeline) {
@@ -45,14 +55,35 @@ constructor(
         // Filter at the "finalize" stage so that views remain bound by PreparationCoordinator
         pipeline.addFinalizeFilter(notifFilter)
         keyguardNotificationVisibilityProvider.addOnStateChangedListener(::invalidateListFromFilter)
+        // Rebuild the lock-screen list when Now Bar's call visibility option changes.
+        nowBarSettings.nowBarAppearance
+            .map { it.enabled && it.calls && it.hideCall }
+            .distinctUntilChanged()
+            .onEach { invalidateListFromFilter("Now Bar call visibility changed") }
+            .launchIn(applicationScope)
         updateSectionHeadersVisibility()
     }
 
     private val notifFilter: NotifFilter =
         object : NotifFilter(TAG) {
             override fun shouldFilterOut(entry: NotificationEntry, now: Long): Boolean =
-                keyguardNotificationVisibilityProvider.shouldHideNotification(entry)
+                keyguardNotificationVisibilityProvider.shouldHideNotification(entry) ||
+                    shouldHideNowBarCall(entry)
         }
+
+    private fun shouldHideNowBarCall(entry: NotificationEntry): Boolean {
+        if (statusBarStateController.state != StatusBarState.KEYGUARD) return false
+        val nowBar = nowBarSettings.nowBarAppearance.value
+        if (!nowBar.enabled || !nowBar.calls || !nowBar.hideCall) return false
+        val notification = entry.sbn.notification
+        if (notification.category != Notification.CATEGORY_CALL) return false
+        val extras = notification.extras
+        // Mirror the call classification used by Lunaris's live-event source:
+        // only suppress a call that the Now Bar is capable of displaying.
+        return extras.containsKey(Notification.EXTRA_ANSWER_INTENT) ||
+            extras.containsKey(Notification.EXTRA_DECLINE_INTENT) ||
+            extras.containsKey(Notification.EXTRA_HANG_UP_INTENT)
+    }
 
     // TODO(b/206118999): merge this class with SensitiveContentCoordinator which also depends on
     //  these same updates

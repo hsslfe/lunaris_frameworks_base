@@ -1,5 +1,7 @@
 package com.android.systemui.axdynamicbar.data
 
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.util.Log
 import com.android.systemui.axdynamicbar.data.source.AospChipIslandManager
 import com.android.systemui.axdynamicbar.data.source.AppTrackingIslandManager
@@ -41,6 +43,18 @@ constructor(
     }
 
     @Volatile private var listenersStarted = false
+    // Only the visible lockscreen Now Bar uses persistent charging events.
+    private var nowBarLockscreenActive = false
+
+    fun setNowBarLockscreenActive(active: Boolean) {
+        if (nowBarLockscreenActive == active) return
+        nowBarLockscreenActive = active
+        if (listenersStarted) refreshChargingListener()
+    }
+
+    // A change to Now Bar's options must recompute the existing source events
+    // even if the underlying media/notification objects have not changed.
+    private val settingsRevision = MutableStateFlow(0)
 
     private val _indicationEvents =
         MutableStateFlow<Map<String, IslandEvent.KeyguardIndication>>(emptyMap())
@@ -67,8 +81,11 @@ constructor(
             else -> settings.disabledEventTypes.value
         }
 
+    private fun isNowBarTypeEnabled(typeId: String): Boolean =
+        settings.nowBarAppearance.value.sourceTypes?.contains(typeId) == true
+
     private fun isTypeEnabled(typeId: String): Boolean =
-        settings.isEventSourceNeeded(typeId)
+        settings.isEventSourceNeeded(typeId) || isNowBarTypeEnabled(typeId)
 
     private fun isMediaSourceNeeded(): Boolean =
         isTypeEnabled("media") || settings.isKeyguardMusicPillEnabled.value
@@ -102,7 +119,7 @@ constructor(
         if (isMediaSourceNeeded()) media.startListening()
         else media.stopListening()
 
-        if (settings.isAnyBarEnabled()) notification.startListening()
+        if (settings.isAnyBarEnabled() || settings.nowBarAppearance.value.enabled) notification.startListening()
         else notification.stopListening()
 
         if (isTypeEnabled("bluetooth")) connectivity.startBluetooth()
@@ -112,8 +129,7 @@ constructor(
         if (isTypeEnabled("vpn")) connectivity.startVpn()
         else connectivity.stopVpn()
 
-        if (isTypeEnabled("charging")) system.startCharging()
-        else system.stopCharging()
+        refreshChargingListener()
         if (isTypeEnabled("ringer")) system.startRinger()
         else system.stopRinger()
         if (isTypeEnabled("clipboard")) system.startClipboard()
@@ -131,7 +147,16 @@ constructor(
     }
 
     private fun syncDisabledTypes() {
-        notification.disabledTypes = disabled
+        notification.disabledTypes = disabled.filterNot(::isNowBarTypeEnabled).toSet()
+    }
+
+    private fun refreshChargingListener() {
+        val persistent = nowBarLockscreenActive && isNowBarTypeEnabled("charging")
+        if (system.persistWhilePluggedIn != persistent) {
+            system.stopCharging()
+            system.persistWhilePluggedIn = persistent
+        }
+        if (isTypeEnabled("charging")) system.startCharging() else system.stopCharging()
     }
 
     private fun buildEventsFlow(): Flow<List<IslandEvent>> {
@@ -212,8 +237,18 @@ constructor(
             events.sorted()
         }.distinctUntilChanged { old, new ->
             old.size == new.size && old.indices.all { i ->
-                old[i].withoutDrawables() == new[i].withoutDrawables()
+                val previous = old[i]
+                val current = new[i]
+                previous === current || (
+                    previous.withoutDrawables() == current.withoutDrawables() &&
+                        (previous !is IslandEvent.Media || current !is IslandEvent.Media ||
+                            sameAlbumArt(previous.albumArt, current.albumArt))
+                )
             }
         }
     }
+
+    private fun sameAlbumArt(previous: Drawable?, current: Drawable?): Boolean =
+        previous === current || (previous is BitmapDrawable && current is BitmapDrawable &&
+            previous.bitmap === current.bitmap)
 }

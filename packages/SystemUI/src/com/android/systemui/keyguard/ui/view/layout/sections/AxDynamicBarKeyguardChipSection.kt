@@ -83,6 +83,10 @@ constructor(
     private var expansionHandle: DisposableHandle? = null
     private var enforceAction: Runnable? = null
     private val hiddenViews = mutableSetOf<View>()
+    // While the collapsed Now Bar's expanded content fades away, keep the
+    // native host anchored in its expanded slot. Reposition only once Compose
+    // signals that the exit transition has fully settled.
+    private var nowBarExitPending = false
 
     override fun addViews(constraintLayout: ConstraintLayout) {
         val dismissView =
@@ -108,16 +112,38 @@ constructor(
     override fun bindData(constraintLayout: ConstraintLayout) {
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
-        indicationController.setSuppressIndication(viewModel.shouldSuppressKeyguardIndication.value)
+        val nowBarEnabled = viewModel.nowBarAppearance.value.enabled
+        val pillVisible = viewModel.isLockscreenPillActivityVisible.value
+        // Now Bar hides bottom text only when there is a real live activity.
+        // The optional battery-only fallback must leave lockscreen hints visible.
+        // If enabled but empty, restore every standard keyguard hint even when
+        // the separately configured Dynamic Bar is enabled.
+        indicationController.setSuppressIndication(
+            pillVisible || (!nowBarEnabled && viewModel.shouldSuppressKeyguardIndication.value)
+        )
+        indicationController.setSuppressNowBarIndications(pillVisible)
 
         composeView.setContent { PlatformTheme { AxDynamicBarKeyguardChip(viewModel = viewModel) } }
 
         bindHandle =
             composeView.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
-                    viewModel.shouldSuppressKeyguardIndication.collect {
-                        indicationController.setSuppressIndication(it)
+                    launch {
+                        // With Now Bar enabled, its actual pill visibility alone
+                        // determines text suppression. The classic Dynamic Bar
+                        // rule applies only if Now Bar itself is switched off.
+                        combine(
+                            viewModel.shouldSuppressKeyguardIndication,
+                            viewModel.nowBarAppearance,
+                            viewModel.isLockscreenPillActivityVisible,
+                        ) { legacySuppress, nowBar, visible ->
+                            visible || (!nowBar.enabled && legacySuppress)
+                        }
+                            .distinctUntilChanged()
+                            .collect { indicationController.setSuppressIndication(it) }
                     }
+                    viewModel.isLockscreenPillActivityVisible
+                        .collect { indicationController.setSuppressNowBarIndications(it) }
                 }
             }
 
@@ -128,6 +154,18 @@ constructor(
                     scope.launch {
                         viewModel.keyguardExpansion.collapseSettled.collect {
                             if (!viewModel.keyguardExpansion.isExpanded.value) {
+                                // Complete the exit atomically: restoring the
+                                // wallpaper or other lockscreen layers earlier
+                                // makes the whole display flash while music fades.
+                                if (nowBarExitPending) {
+                                    nowBarExitPending = false
+                                    rebindPreDrawAction(constraintLayout, false)
+                                    WallpaperDepthUtils.get()?.setDynamicBarExpanded(false)
+                                    constraintLayout.requireViewById<View>(dismissViewId)
+                                        .visibility = View.GONE
+                                    MediaViewController.getOrNull()
+                                        ?.setExpandedMusicOpen(false)
+                                }
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
                             }
@@ -152,13 +190,37 @@ constructor(
                             }
                             .distinctUntilChanged()
                             .collect { expandedMusicOpen ->
-                                com.android.systemui.media.MediaViewController.getOrNull()
-                                    ?.setExpandedMusicOpen(expandedMusicOpen)
+                                // A track change may briefly clear chipState.
+                                // Keep the media backdrop stable until the
+                                // actual expanded exit has finished.
+                                if (expandedMusicOpen || !nowBarExitPending) {
+                                    MediaViewController.getOrNull()
+                                        ?.setExpandedMusicOpen(expandedMusicOpen)
+                                }
                             }
                     }
-                    combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps) { expanded, lowUdfps
-                            ->
-                            expanded to lowUdfps
+                    scope.launch {
+                        // Raise updates the native layout, not a child offset. This
+                        // also preserves pointer hit-testing and the blur background.
+                        combine(
+                            viewModel.isKeyguardExpanded,
+                            viewModel.isLowUdfps,
+                            viewModel.nowBarAppearance,
+                        ) { expanded, lowUdfps, style ->
+                            Triple(expanded, lowUdfps, if (style.enabled) style.raise else 0)
+                        }
+                            .distinctUntilChanged()
+                            .collect { (expanded, lowUdfps, _) ->
+                                if (!expanded && !nowBarExitPending) {
+                                    // Raise/UD FPS updates remain immediate when
+                                    // fully collapsed, but must not move an exiting
+                                    // expanded panel before its fade is complete.
+                                    applyCollapsedLp(composeView, lowUdfps)
+                                }
+                            }
+                    }
+                    combine(viewModel.isKeyguardExpanded, viewModel.isLowUdfps) {
+                            expanded, lowUdfps -> expanded to lowUdfps
                         }
                         .collect { (expanded, lowUdfps) ->
                             onExpandedStateChanged(
@@ -172,18 +234,36 @@ constructor(
             }
     }
 
+    /** Raise the host view itself so its measured content and touch region move together. */
+    private fun collapsedBottomMarginPx(): Int {
+        val style = viewModel.nowBarAppearance.value
+        val raisedPx = if (style.enabled) style.raise.toFloat().dpToPx(context) else 0
+        return extraBottomMarginPx(context) + raisedPx
+    }
+
     private fun onExpandedStateChanged(
         constraintLayout: ConstraintLayout,
         composeView: View,
         expanded: Boolean,
         lowUdfps: Boolean,
     ) {
+        if (expanded && (viewModel.nowBarAppearance.value.enabled ||
+                (viewModel.isKeyguardMusicPillEnabled.value &&
+                    viewModel.chipState.value?.event is IslandEvent.Media))) {
+            nowBarExitPending = true
+        } else if (!expanded && nowBarExitPending) {
+            // The Compose expanded panel is still fading away. Do not change
+            // wallpaper depth, pre-draw suppression or parent constraints yet.
+            // The collapseSettled callback restores all of them together.
+            return
+        }
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
         rebindPreDrawAction(constraintLayout, expanded)
         TransitionManager.endTransitions(constraintLayout)
         constraintLayout.requireViewById<View>(dismissViewId).visibility =
             if (expanded) View.VISIBLE else View.GONE
-        if (!expanded && !viewModel.keyguardExpansion.canShow.value) {
+        if (!expanded && !viewModel.keyguardExpansion.canShow.value &&
+            !nowBarExitPending) {
             setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         }
         if (expanded) {
@@ -260,11 +340,11 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        val expanded = viewModel.isKeyguardExpanded.value
+        val expanded = viewModel.isKeyguardExpanded.value || nowBarExitPending
         val lowUdfps = viewModel.isLowUdfps.value
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         val chipAboveLockPx = CHIP_ABOVE_LOCK_MARGIN_DP.dpToPx(context)
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         constraintSet.apply {
             constrainWidth(dismissViewId, ConstraintSet.MATCH_CONSTRAINT)
@@ -376,7 +456,7 @@ constructor(
 
     private fun applyCollapsedLp(composeView: View, lowUdfps: Boolean) {
         val lp = composeView.layoutParams as ConstraintLayout.LayoutParams
-        val extraBottomPx = extraBottomMarginPx(context)
+        val extraBottomPx = collapsedBottomMarginPx()
         lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
         lp.topMargin = 0
@@ -403,6 +483,7 @@ constructor(
     }
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
+        nowBarExitPending = false
         TransitionManager.endTransitions(constraintLayout)
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
@@ -412,6 +493,7 @@ constructor(
         expansionHandle = null
         bindHandle?.dispose()
         bindHandle = null
+        indicationController.setSuppressNowBarIndications(false)
         indicationController.setSuppressIndication(false)
         setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
         constraintLayout.removeView(dismissViewId)

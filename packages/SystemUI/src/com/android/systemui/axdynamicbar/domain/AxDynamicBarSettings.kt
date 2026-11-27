@@ -47,6 +47,11 @@ class AxDynamicBarSettings @Inject constructor(
 
     private val contentResolver = context.contentResolver
 
+    private val _nowBarAppearance = MutableStateFlow(
+        AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId)
+    )
+    val nowBarAppearance = _nowBarAppearance.asStateFlow()
+
     private val _isEnabled = MutableStateFlow(false)
     @get:JvmName("getIsEnabled") val isEnabled: StateFlow<Boolean> = _isEnabled.asStateFlow()
 
@@ -105,6 +110,11 @@ class AxDynamicBarSettings @Inject constructor(
         initialized = true
         userTracker.addCallback(userCallback, context.mainExecutor)
         refresh()
+        for (key in AxLockscreenNowBarSettings.KEYS) {
+            contentResolver.registerContentObserver(
+                Settings.System.getUriFor(key), false, settingsObserver, UserHandle.USER_ALL,
+            )
+        }
         secureSettings.registerContentObserverForUserSync(
             KEY_ENABLED,
             false,
@@ -182,6 +192,7 @@ class AxDynamicBarSettings @Inject constructor(
     }
 
     private fun refresh() {
+        _nowBarAppearance.value = AxLockscreenNowBarSettings.read(contentResolver, userTracker.userId)
         if (secureSettings.getStringForUser(KEY_KEYGUARD_ENABLED, UserHandle.USER_CURRENT) == null) {
             val wasEnabled =
                 secureSettings.getIntForUser(KEY_ENABLED, 0, UserHandle.USER_CURRENT) == 1 &&
