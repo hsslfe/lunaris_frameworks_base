@@ -1482,6 +1482,7 @@ private fun ContentScope.PlayPauseAction(
     if (viewModel == null) return
 
     val animationsEnabled = LocalMediaAnimationsEnabled.current
+    val lockscreenTransport = LocalLockscreenMediaTransport.current
     val buttonSize = DpSize(width = 72.dp, height = 48.dp)
     val cornerRadius: Dp by
         animateDpAsState(
@@ -1500,7 +1501,13 @@ private fun ContentScope.PlayPauseAction(
         PlatformButton(
             onClick = {
                 viewModel.onClick?.let {
-                    it()
+                    // Compose already verified the down/up gesture on this
+                    // control. Do not reclassify it using stale reveal history.
+                    if (lockscreenTransport && isRevealedColorOsLockscreenMedia()) {
+                        (viewModel.onLockscreenTransportClick ?: it)()
+                    } else {
+                        it()
+                    }
                     if (!squish && animationsEnabled) scope.launch {
                         scaleAnimatable.animateTo(
                             targetValue = 1.125f,
@@ -1604,6 +1611,7 @@ private fun SecondaryActionContent(
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val lockscreenTransport = LocalLockscreenMediaTransport.current
     val sharedModifier = modifier.size(48.dp).padding(13.dp).then(
         if (LocalMediaButtonSquish.current) Modifier.mediaActionPressFeedback(
             interactionSource,
@@ -1615,7 +1623,13 @@ private fun SecondaryActionContent(
             when (viewModel.icon) {
                 is Icon.Resource ->
                     PlatformIconButton(
-                        onClick = viewModel.onClick ?: {},
+                        onClick = {
+                            val action = if (lockscreenTransport &&
+                                isRevealedColorOsLockscreenMedia()
+                            ) viewModel.onLockscreenTransportClick ?: viewModel.onClick
+                            else viewModel.onClick
+                            action?.invoke()
+                        },
                         modifier = sharedModifier.sysuiResTag(resId),
                         enabled = LocalMediaAnimationsEnabled.current && viewModel.onClick != null,
                         colors = IconButtonDefaults.iconButtonColors(contentColor = iconColor),
@@ -1626,7 +1640,13 @@ private fun SecondaryActionContent(
 
                 is Icon.Loaded ->
                     PlatformIconButton(
-                        onClick = viewModel.onClick ?: {},
+                        onClick = {
+                            val action = if (lockscreenTransport &&
+                                isRevealedColorOsLockscreenMedia()
+                            ) viewModel.onLockscreenTransportClick ?: viewModel.onClick
+                            else viewModel.onClick
+                            action?.invoke()
+                        },
                         modifier = sharedModifier.sysuiResTag(resId),
                         enabled = LocalMediaAnimationsEnabled.current && viewModel.onClick != null,
                         colors = IconButtonDefaults.iconButtonColors(contentColor = iconColor),

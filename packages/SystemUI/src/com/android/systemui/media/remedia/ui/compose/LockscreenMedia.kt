@@ -18,12 +18,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.systemui.common.ui.compose.PagerDots
+import com.android.systemui.axdynamicbar.ui.AxDynamicBarColorOsController
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.media.remedia.shared.model.LockscreenMediaStyle
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
@@ -31,6 +33,15 @@ import com.android.systemui.qs.panels.ui.media.LocalMediaButtonSquish
 import com.android.systemui.qs.panels.ui.media.LockscreenMediaCard
 import com.android.systemui.qs.panels.ui.media.lockscreenMediaCornerRadius
 import com.android.systemui.qs.panels.ui.viewmodel.AxMediaViewModel
+
+// Only the lockscreen media host can opt transport controls into the
+// explicitly revealed ColorOS tap path. Other media surfaces retain falsing.
+internal val LocalLockscreenMediaTransport = staticCompositionLocalOf { false }
+
+internal fun isRevealedColorOsLockscreenMedia(): Boolean {
+    val controller = AxDynamicBarColorOsController.getOrNull() ?: return false
+    return controller.isStackGatingActive() && controller.isStackRevealed()
+}
 
 @Composable
 fun LockscreenMedia(
@@ -67,6 +78,7 @@ fun LockscreenMedia(
     ) {
         CompositionLocalProvider(
             LocalMediaButtonSquish provides true,
+            LocalLockscreenMediaTransport provides true,
             LocalMediaAnimationsEnabled provides (visible && allowed && active),
         ) {
             Media(

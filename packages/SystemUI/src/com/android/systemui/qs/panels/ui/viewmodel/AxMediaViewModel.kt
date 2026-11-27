@@ -37,6 +37,7 @@ import com.android.systemui.media.remedia.domain.model.MediaActionModel
 import com.android.systemui.media.remedia.domain.model.MediaOutputDeviceModel
 import com.android.systemui.media.remedia.domain.model.MediaSessionModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaFalsingSystem
+import com.android.systemui.media.remedia.ui.compose.isRevealedColorOsLockscreenMedia
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.qs.panels.data.repository.AxMediaHistoryRepository
@@ -274,8 +275,18 @@ constructor(
         }
     }
 
-    fun runAction(action: MediaActionModel.Action) {
-        falsingSystem.runIfNotFalseTap(FalsingManager.MODERATE_PENALTY) { action.onClick?.invoke() }
+    fun runAction(action: MediaActionModel.Action) = runAction(action, lockscreenTransport = false)
+
+    fun runAction(action: MediaActionModel.Action, lockscreenTransport: Boolean) {
+        if (lockscreenTransport && isRevealedColorOsLockscreenMedia()) {
+            // The visible Compose transport button has already accepted a
+            // clean click. The preceding reveal swipe must not veto it.
+            action.onClick?.invoke()
+        } else {
+            falsingSystem.runIfNotFalseTap(FalsingManager.MODERATE_PENALTY) {
+                action.onClick?.invoke()
+            }
+        }
     }
 
     private fun Offset.isHorizontal(): Boolean = abs(x) >= abs(y)

@@ -125,8 +125,8 @@ constructor(
                                     } else {
                                         seekProgress
                                     },
-                                left = session.leftAction.toSecondaryActionViewModel(),
-                                right = session.rightAction.toSecondaryActionViewModel(),
+                                left = session.leftAction.toSecondaryActionViewModel(transportAction = true),
+                                right = session.rightAction.toSecondaryActionViewModel(transportAction = true),
                                 isSquiggly =
                                     session.state != MediaSessionState.Paused &&
                                         !isCurrentSessionAndScrubbing,
@@ -180,8 +180,8 @@ constructor(
                                     .WithPlayPause
                         ) {
                             MediaNavigationViewModel.ActionsOnly(
-                                left = session.leftAction.toSecondaryActionViewModel(),
-                                right = session.rightAction.toSecondaryActionViewModel(),
+                                left = session.leftAction.toSecondaryActionViewModel(transportAction = true),
+                                right = session.rightAction.toSecondaryActionViewModel(transportAction = true),
                             )
                         } else {
                             MediaNavigationViewModel.Hidden
@@ -383,6 +383,7 @@ constructor(
                 MediaPlayPauseActionViewModel(
                     state = mediaSessionState,
                     icon = icon,
+                    onLockscreenTransportClick = onClick,
                     onClick =
                         onClick?.let {
                             {
@@ -397,11 +398,14 @@ constructor(
         }
     }
 
-    private fun MediaActionModel.toSecondaryActionViewModel(): MediaSecondaryActionViewModel {
+    private fun MediaActionModel.toSecondaryActionViewModel(
+        transportAction: Boolean = false,
+    ): MediaSecondaryActionViewModel {
         return when (this) {
             is MediaActionModel.Action ->
                 MediaSecondaryActionViewModel.Action(
                     icon = icon,
+                    onLockscreenTransportClick = if (transportAction) onClick else null,
                     onClick =
                         onClick?.let {
                             {

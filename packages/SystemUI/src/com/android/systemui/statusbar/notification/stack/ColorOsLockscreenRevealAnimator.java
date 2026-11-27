@@ -242,6 +242,30 @@ final class ColorOsLockscreenRevealAnimator {
             return -1;
         }
 
+        calculateRevealBounds(item, mRevealBounds);
+        final float tS = clamp(item.scale.value.getValue());
+        final float startH = Math.min(mPillHeight, rowH);
+
+        final int saveCount = canvas.save();
+        final float alpha = clamp(tS / ALPHA_RAMP_WINDOW);
+        if (alpha < 1f) {
+            canvas.saveLayerAlpha(mRevealBounds, Math.round(255f * alpha));
+        }
+        final float cardRadius = mHost.getResources()
+                .getDimension(R.dimen.notification_corner_radius);
+        final float cornerRadius = MathUtils.lerp(startH * 0.5f, cardRadius, tS);
+        mClipPath.rewind();
+        mClipPath.addRoundRect(mRevealBounds, cornerRadius, cornerRadius, Path.Direction.CW);
+        canvas.clipPath(mClipPath);
+        canvas.translate(mRevealBounds.left, mRevealBounds.top);
+        canvas.scale(mRevealBounds.width() / rowW, mRevealBounds.height() / rowH);
+        canvas.translate(-item.bounds.left, -item.bounds.top);
+        return saveCount;
+    }
+
+    private void calculateRevealBounds(ItemMotion item, RectF out) {
+        final float rowW = item.bounds.width();
+        final float rowH = item.bounds.height();
         final float rawTY = item.translate.value.getValue();
         final float tY = clamp(rawTY);
         final float rawScale = item.scale.value.getValue();
@@ -264,27 +288,67 @@ final class ColorOsLockscreenRevealAnimator {
                 * (1f + scaleOvershoot * REVEAL_SQUISH_WIDTH_FACTOR);
         final float curH = MathUtils.lerp(startH, rowH, tS)
                 * (1f - scaleOvershoot * REVEAL_SQUISH_HEIGHT_FACTOR);
-        mRevealBounds.set(
+        out.set(
                 curCenterX - curW * 0.5f,
                 curCenterY - curH * 0.5f,
                 curCenterX + curW * 0.5f,
                 curCenterY + curH * 0.5f);
+    }
 
-        final int saveCount = canvas.save();
-        final float alpha = clamp(tS / ALPHA_RAMP_WINDOW);
-        if (alpha < 1f) {
-            canvas.saveLayerAlpha(mRevealBounds, Math.round(255f * alpha));
+    /**
+     * Translate the visible position of a revealed card back to its native
+     * layout coordinates before finishing the animation. The canvas transform
+     * is not part of Android's normal hit testing.
+     */
+    boolean mapTouchToLayout(float rawX, float rawY, float[] out) {
+        if (!isRevealedAndActive() || !mRunning) return false;
+        mHost.getLocationOnScreen(mHostLocation);
+        final float x = rawX - mHostLocation[0];
+        final float y = rawY - mHostLocation[1];
+        // Prefer the highest rendered row when cards briefly overlap.
+        View bestChild = null;
+        float bestZ = -Float.MAX_VALUE;
+        int bestIndex = -1;
+        float bestX = x;
+        float bestY = y;
+        for (int i = 0; i < mHost.getChildCount(); i++) {
+            View child = mHost.getChildAt(i);
+            if (!(child instanceof ExpandableView expandable)
+                    || !mHost.isInteractiveRevealedChild(expandable)
+                    || child.getVisibility() != View.VISIBLE || child.getAlpha() <= 0f) {
+                continue;
+            }
+            ItemMotion item = mItems.get(child);
+            if (item == null || item.bounds.isEmpty() || !shouldDraw(child)) continue;
+            if (item.isAt(1f)) {
+                mRevealBounds.set(item.bounds);
+            } else {
+                calculateRevealBounds(item, mRevealBounds);
+            }
+            if (mRevealBounds.isEmpty() || !mRevealBounds.contains(x, y)) continue;
+            final float mappedX = item.bounds.left + (x - mRevealBounds.left)
+                    * item.bounds.width() / mRevealBounds.width();
+            final float mappedY = item.bounds.top + (y - mRevealBounds.top)
+                    * item.bounds.height() / mRevealBounds.height();
+            final float scaleY = Math.max(0.001f, child.getScaleY());
+            final float top = item.bounds.top + Math.max(expandable.getClipTopAmount(),
+                    expandable.getTopOverlap()) * scaleY;
+            final float bottom = item.bounds.bottom - Math.max(expandable.getClipBottomAmount(),
+                    expandable.getBottomOverlap()) * scaleY;
+            if (mappedY < top || mappedY >= bottom) continue;
+            if (bestChild == null || child.getZ() > bestZ
+                    || (child.getZ() == bestZ && i > bestIndex)) {
+                bestChild = child;
+                bestZ = child.getZ();
+                bestIndex = i;
+                bestX = mappedX;
+                bestY = mappedY;
+            }
         }
-        final float cardRadius = mHost.getResources()
-                .getDimension(R.dimen.notification_corner_radius);
-        final float cornerRadius = MathUtils.lerp(startH * 0.5f, cardRadius, tS);
-        mClipPath.rewind();
-        mClipPath.addRoundRect(mRevealBounds, cornerRadius, cornerRadius, Path.Direction.CW);
-        canvas.clipPath(mClipPath);
-        canvas.translate(mRevealBounds.left, mRevealBounds.top);
-        canvas.scale(mRevealBounds.width() / rowW, mRevealBounds.height() / rowH);
-        canvas.translate(-item.bounds.left, -item.bounds.top);
-        return saveCount;
+        if (bestChild == null) return false;
+        out[0] = bestX - x;
+        out[1] = bestY - y;
+        return true;
     }
 
     boolean finishForInteraction() {

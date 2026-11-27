@@ -24,4 +24,5 @@ data class MediaPlayPauseActionViewModel(
     val state: MediaSessionState,
     val icon: Icon?,
     val onClick: (() -> Unit)?,
+    val onLockscreenTransportClick: (() -> Unit)? = null,
 )

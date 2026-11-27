@@ -518,6 +518,7 @@ public class NotificationStackScrollLayout
     private boolean mColorOsOutsideTapPending;
     private float mColorOsOutsideDownX;
     private float mColorOsOutsideDownY;
+    private final float[] mColorOsTouchOffset = new float[2];
     private final float[] mMiuiTouchPosition = new float[2];
     private float mMiuiTouchOffsetX;
     private float mMiuiTouchOffsetY;
@@ -4304,12 +4305,24 @@ public class NotificationStackScrollLayout
             mColorOsRevealAnimator.finishForInteraction();
         }
         closeMotoCompactPreviewIfOutsideTouch(ev);
-        final boolean collapseStack = handleLockscreenStackCollapseTouch(ev);
-        if (!collapseStack) finishMiuiMotionForTouch(ev);
+        final boolean colorOsRevealed = mColorOsRevealAnimator.isRevealedAndActive();
+        // The ColorOS outside-tap handler owns collapse for this presentation.
+        final boolean collapseStack = !colorOsRevealed && handleLockscreenStackCollapseTouch(ev);
+        if (colorOsRevealed) {
+            mCollapseStackOnTouchUp = false;
+            mMiuiTouchOffsetX = 0f;
+            mMiuiTouchOffsetY = 0f;
+        } else if (!collapseStack) {
+            finishMiuiMotionForTouch(ev);
+        }
         MotionEvent dispatchedEvent = ev;
         if (collapseStack) {
             dispatchedEvent = MotionEvent.obtain(ev);
             dispatchedEvent.setAction(ACTION_CANCEL);
+        } else if (colorOsRevealed
+                && (mColorOsTouchOffset[0] != 0f || mColorOsTouchOffset[1] != 0f)) {
+            dispatchedEvent = MotionEvent.obtain(ev);
+            dispatchedEvent.offsetLocation(mColorOsTouchOffset[0], mColorOsTouchOffset[1]);
         } else if (mMiuiTouchOffsetX != 0f || mMiuiTouchOffsetY != 0f) {
             dispatchedEvent = MotionEvent.obtain(ev);
             dispatchedEvent.offsetLocation(mMiuiTouchOffsetX, mMiuiTouchOffsetY);
@@ -4325,6 +4338,8 @@ public class NotificationStackScrollLayout
             if (ev.getActionMasked() == ACTION_UP || ev.getActionMasked() == ACTION_CANCEL) {
                 mMiuiTouchOffsetX = 0f;
                 mMiuiTouchOffsetY = 0f;
+                mColorOsTouchOffset[0] = 0f;
+                mColorOsTouchOffset[1] = 0f;
             }
         }
         if (collapseStack && mController != null && !mController.isFalseStackTap()) {
@@ -6556,6 +6571,8 @@ public class NotificationStackScrollLayout
                 mColorOsRevealListener);
         mColorOsRevealAnimator.cancel();
         mColorOsOutsideTapPending = false;
+        mColorOsTouchOffset[0] = 0f;
+        mColorOsTouchOffset[1] = 0f;
         finishMotoCompactSelection();
         mMiuiShadeAnimator.cancel();
         mAmbientState.setMiuiShadeAnimationEnabled(false);
@@ -6567,13 +6584,19 @@ public class NotificationStackScrollLayout
     public boolean handleColorOsOutsideTouch(MotionEvent event) {
         if (!mColorOsRevealAnimator.isRevealedAndActive()) {
             mColorOsOutsideTapPending = false;
+            mColorOsTouchOffset[0] = 0f;
+            mColorOsTouchOffset[1] = 0f;
             return false;
         }
         switch (event.getActionMasked()) {
             case ACTION_DOWN:
+                mColorOsTouchOffset[0] = 0f;
+                mColorOsTouchOffset[1] = 0f;
                 mColorOsOutsideDownX = event.getRawX();
                 mColorOsOutsideDownY = event.getRawY();
-                mColorOsOutsideTapPending = !isRawPointInsideRevealedLockscreenContent(
+                final boolean mapped = mColorOsRevealAnimator.mapTouchToLayout(
+                        mColorOsOutsideDownX, mColorOsOutsideDownY, mColorOsTouchOffset);
+                mColorOsOutsideTapPending = !mapped && !isRawPointInsideRevealedLockscreenContent(
                         mColorOsOutsideDownX, mColorOsOutsideDownY);
                 return false;
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -6644,7 +6667,7 @@ public class NotificationStackScrollLayout
         return false;
     }
 
-    private boolean isInteractiveRevealedChild(ExpandableView child) {
+    boolean isInteractiveRevealedChild(ExpandableView child) {
         if (child instanceof ExpandableNotificationRow row) {
             return !row.isRemoved() && !row.willBeGone();
         }

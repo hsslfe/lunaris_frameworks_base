@@ -87,6 +87,7 @@ import com.android.systemui.media.remedia.domain.model.MediaActionModel
 import com.android.systemui.media.remedia.domain.model.MediaSessionModel
 import com.android.systemui.media.remedia.shared.model.MediaSessionState
 import com.android.systemui.media.remedia.ui.compose.LocalMediaAnimationsEnabled
+import com.android.systemui.media.remedia.ui.compose.LocalLockscreenMediaTransport
 import com.android.systemui.qs.panels.ui.viewmodel.AxMediaViewModel
 import com.android.systemui.res.R
 import kotlinx.coroutines.CompletableDeferred
@@ -266,6 +267,10 @@ internal fun CoreMediaAction(
                 animatedIconAtEnd = animatedIconAtEnd,
                 buffering = buffering,
                 contentDescription = stringResource(descriptionRes),
+                transportAction = descriptionRes == R.string.controls_media_button_prev ||
+                    descriptionRes == R.string.controls_media_button_next ||
+                    descriptionRes == R.string.controls_media_button_play ||
+                    descriptionRes == R.string.controls_media_button_pause,
             )
         MediaActionModel.ReserveSpace -> Spacer(Modifier.size(width = width, height = height))
         MediaActionModel.None,
@@ -393,8 +398,10 @@ internal fun MediaAction(
     animatedIconAtEnd: Boolean = false,
     contentDescription: String? = null,
     buffering: Boolean = false,
+    transportAction: Boolean = false,
 ) {
     val animationsEnabled = LocalMediaAnimationsEnabled.current
+    val lockscreenTransport = LocalLockscreenMediaTransport.current
     val buttonWidth by
         animateDpAsState(
             targetValue = width,
@@ -427,7 +434,10 @@ internal fun MediaAction(
                             indication = ripple(bounded = true, radius = 24.dp),
                             enabled = enabled,
                         ) {
-                            viewModel.runAction(action)
+                            viewModel.runAction(
+                                action,
+                                lockscreenTransport = lockscreenTransport && transportAction,
+                            )
                         },
             ) {
                 Box(

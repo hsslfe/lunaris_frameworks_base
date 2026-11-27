@@ -1369,10 +1369,9 @@ public class MediaControlPanel {
                 for (ViewParent parent = button.getParent(); parent instanceof View;
                         parent = parent.getParent()) {
                     if (parent instanceof MediaContainerView) {
-                        if (mFalsingManager.isSimpleTap()) {
-                            return true;
-                        }
-                        break;
+                        // The enabled native ImageButton has already accepted
+                        // the click. Do not reject it based on the prior reveal.
+                        return true;
                     }
                 }
             }
