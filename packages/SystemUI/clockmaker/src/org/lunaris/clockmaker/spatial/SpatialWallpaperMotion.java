@@ -25,7 +25,6 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     private final Listener listener;
     private boolean requested;
     private boolean active;
-    private boolean paused;
     private boolean sensing;
     private boolean scheduled;
     private float sensitivity = 1f;
@@ -43,7 +42,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
 
     private final Choreographer.FrameCallback frame = time -> {
         scheduled = false;
-        if (!active || paused) return;
+        if (!active) return;
         if (!interactive()) {
             setActive(false, false);
             return;
@@ -114,40 +113,16 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
                 reset();
                 return;
             }
-            if (!paused) {
-                if (animate) animateTo(OVERSCAN, 320, false);
-                else scale = OVERSCAN;
-            }
+            if (animate) animateTo(OVERSCAN, 320, false);
+            else scale = OVERSCAN;
             dispatchPose();
         } else {
             if (sensing) sensor.removeListener(this);
             sensing = false;
             targetX = targetY = 0f;
-            if (animate && !paused && interactive()) animateTo(1f, 120, true);
+            if (animate && interactive()) animateTo(1f, 120, true);
             else reset();
         }
-    }
-
-    /** Freeze the rendered pose without resetting the sensor reference or overscan. */
-    public void setPaused(boolean pause) {
-        if (paused == pause) return;
-        paused = pause;
-        cancelFrame();
-        cancelAnimation();
-        velocityX = velocityY = 0f;
-        if (paused) return;
-        if (!active || !interactive()) {
-            if (!interactive()) setActive(false, false);
-            else reset();
-            return;
-        }
-        targetX = latestX * sensitivity;
-        targetY = latestY * sensitivity;
-        if (scale < OVERSCAN) {
-            long duration = Math.max(1L, Math.round(320f * (OVERSCAN - scale) / (OVERSCAN - 1f)));
-            animateTo(OVERSCAN, duration, false);
-        }
-        if (!isSettled()) schedule();
     }
 
     private void animateTo(float endScale, long duration, boolean resetPose) {
@@ -195,7 +170,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     public void onDisplayRotationChanged(int rotation) { sensor.onDisplayRotationChanged(rotation); }
 
     public void destroy() {
-        requested = active = paused = false;
+        requested = active = false;
         if (sensing) sensor.removeListener(this);
         sensing = false;
         reset();
@@ -227,7 +202,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
     }
 
     private void schedule() {
-        if (!active || paused || scheduled) return;
+        if (!active || scheduled) return;
         scheduled = true;
         Choreographer.getInstance().postFrameCallback(frame);
     }

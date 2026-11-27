@@ -5,17 +5,12 @@
 package com.android.systemui.util;
 
 import android.content.Context;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.View;
 import com.android.systemui.Dependency;
 import com.android.systemui.tuner.TunerService;
 import org.lunaris.clockmaker.spatial.SpatialWallpaperMotion;
 
 public final class SpatialEffectController implements ParallaxTiltSensor.Listener {
-    // Zoom callbacks report changed transforms only. Two quiet frames plus a small
-    // scheduling margin distinguish a settled transform from an in-flight animation.
-    private static final long ZOOM_SETTLE_MS = 48L;
     private static final String SENSITIVITY = "system:depth_wallpaper_spatial_sensitivity";
     private final float maxTravelX;
     private final float maxTravelY;
@@ -33,12 +28,6 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
     private float pivotX;
     private float pivotY;
     private float spatialScale = 1f;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private boolean zoomMoving;
-    private final Runnable zoomSettled = () -> {
-        zoomMoving = false;
-        updateMotionPause();
-    };
     private final TunerService.Tunable tunable = (key, value) -> {
         if (SENSITIVITY.equals(key)) setSensitivity(TunerService.parseInteger(value, 100));
     };
@@ -78,23 +67,11 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
 
     public void setWallpaperZoom(float scale, float x, float y) {
         if (!Float.isFinite(scale) || scale <= 0f || !Float.isFinite(x) || !Float.isFinite(y)) return;
-        boolean changed = hasZoom && (Float.compare(zoom, scale) != 0
-                || Float.compare(pivotX, x) != 0 || Float.compare(pivotY, y) != 0);
-        if (changed) {
-            zoomMoving = true;
-            updateMotionPause();
-            mainHandler.removeCallbacks(zoomSettled);
-            mainHandler.postDelayed(zoomSettled, ZOOM_SETTLE_MS);
-        }
         hasZoom = true;
         zoom = scale;
         pivotX = x;
         pivotY = y;
         applyScale();
-    }
-
-    private void updateMotionPause() {
-        motion.setPaused(zoomMoving);
     }
 
     public void setActive(boolean active) { setActive(active, true); }
@@ -109,8 +86,6 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
 
     public void destroy() {
         requested = false;
-        mainHandler.removeCallbacks(zoomSettled);
-        zoomMoving = false;
         hasZoom = false;
         zoom = 1f;
         motion.destroy();
