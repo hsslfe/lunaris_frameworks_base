@@ -227,6 +227,7 @@ fun IndependentNowBarChip(
     val isKeyguardColorOsActive by viewModel.isKeyguardColorOsActive.collectAsStateWithLifecycle()
     val isKeyguardColorOsRevealed by viewModel.isKeyguardColorOsRevealed.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
+    val touchView = LocalView.current
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
     val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
     val hasNowBarActivity = state?.allEvents?.any {
@@ -278,7 +279,9 @@ fun IndependentNowBarChip(
             (state ?: lastExpandedState)?.let {
                 KeyguardExpandedContent(
                     event = it.event,
-                    allEvents = it.allEvents,
+                    allEvents = if (it.event is IslandEvent.Notification) {
+                        state?.allEvents.orEmpty()
+                    } else it.allEvents,
                     interactor = viewModel.interactor,
                     onCollapse = { viewModel.keyguardExpansion.collapse() },
                     hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
@@ -370,32 +373,56 @@ fun IndependentNowBarChip(
                     scaleY = impactScaleY.value
                     translationY = impactOffsetYDp.value.dp.toPx()
                 }
-                .pointerInput(viewModel, state?.event?.id) {
+                .pointerInput(viewModel, touchView, touchSlop, state?.event?.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial)
                         val start = down.position
+                        val canSwipeUp = viewModel.colorOsController.canRevealFromNowBar()
+                        val parent = if (canSwipeUp) touchView.parent else null
+                        // Keep a pill-originated upward drag out of the unlock gesture.
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        val revealDistance = maxOf(32.dp.toPx(), touchSlop * 2f)
                         var dragging = false
+                        var revealing = false
                         var totalDx = 0f
-                        var canceled = false
                         try {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 val dx = change.position.x - start.x
                                 val dy = change.position.y - start.y
+                                if (event.changes.any { it.id != down.id && it.pressed }) {
+                                    if (dragging || revealing) change.consume()
+                                    break
+                                }
                                 if (!change.pressed) {
-                                    if (dragging && !canceled && !change.isConsumed) {
+                                    if (revealing && !change.isConsumed) {
+                                        change.consume()
+                                        if (-dy >= revealDistance &&
+                                            viewModel.colorOsController.revealFromNowBar()
+                                        ) {
+                                            touchView.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        }
+                                    } else if (dragging && !change.isConsumed) {
                                         change.consume()
                                         swipe.cycle(previous = totalDx > 0f)
                                     }
                                     break
                                 }
-                                if (change.isConsumed && !dragging) { canceled = true; break }
-                                if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
-                                    if (abs(dy) >= abs(dx)) break
-                                    dragging = true
+                                if (change.isConsumed && !dragging && !revealing) break
+                                if (!dragging && !revealing &&
+                                    (abs(dx) > touchSlop || abs(dy) > touchSlop)
+                                ) {
+                                    if (abs(dy) >= abs(dx)) {
+                                        if (dy >= 0f || !canSwipeUp) break
+                                        revealing = true
+                                    } else {
+                                        dragging = true
+                                    }
                                 }
-                                if (dragging) {
+                                if (revealing) {
+                                    change.consume()
+                                } else if (dragging) {
                                     totalDx = dx
                                     swipe.drag(dx, touchSlop)
                                     change.consume()
@@ -403,6 +430,7 @@ fun IndependentNowBarChip(
                             }
                         } finally {
                             swipe.release()
+                            parent?.requestDisallowInterceptTouchEvent(false)
                         }
                     }
                 }
@@ -570,12 +598,18 @@ private fun KeyguardChipBody(
     val pressInteractionSource = remember { MutableInteractionSource() }
     val isPillPressed by pressInteractionSource.collectIsPressedAsState()
     val onPillClick: () -> Unit = {
-        if (viewModel.colorOsController.shouldUseColorOsRevealFor(event)) {
+        if (nowBarStyle != null && viewModel.colorOsController.isRevealed.value) {
+            // Ignore taps on the outgoing pill during the notification reveal.
+        } else if (nowBarStyle?.colorOsSwipeUp != true &&
+            viewModel.colorOsController.shouldUseColorOsRevealFor(event)
+        ) {
             popupAnchor.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             viewModel.colorOsController.toggleReveal()
         } else when (event) {
-            is IslandEvent.Notification ->
-                viewModel.launchNotificationFromKeyguard(event)
+            is IslandEvent.Notification -> {
+                if (nowBarStyle?.colorOsSwipeUp == true) viewModel.keyguardExpansion.toggle()
+                else viewModel.launchNotificationFromKeyguard(event)
+            }
             is IslandEvent.AospChip ->
                 viewModel.handleAospChipTap(event, aospChipExpandable)
             is IslandEvent.KeyguardIndication, is IslandEvent.AppSwitch -> Unit

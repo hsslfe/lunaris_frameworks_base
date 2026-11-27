@@ -237,6 +237,25 @@ constructor(
     fun shouldUseColorOsRevealFor(event: IslandEvent): Boolean =
         isModeActive.value && event.hasAssociatedLockscreenNotification()
 
+    fun canRevealFromNowBar(): Boolean {
+        val state = interactor.uiState.value
+        val nowBar = interactor.settings.nowBarAppearance.value
+        return nowBar.enabled && nowBar.colorOsSwipeUp &&
+            isModeActive.value && !isRevealed.value &&
+            !keyguardExpansion.isExpanded.value &&
+            interactor.isOnKeyguard.value && !interactor.isDozing.value &&
+            interactor.dozeAmount.value <= 0f && !interactor.isBouncerShowing.value &&
+            !interactor.isPanelExpanded.value && interactor.qsExpansion.value <= 0f &&
+            state.shouldShow && !state.manuallyHidden &&
+            state.events.any { it.hasAssociatedLockscreenNotification() }
+    }
+
+    fun revealFromNowBar(): Boolean {
+        if (!canRevealFromNowBar()) return false
+        reveal()
+        return isRevealed.value
+    }
+
     fun reveal() {
         if (!isModeActive.value ||
             !interactor.isOnKeyguard.value ||
