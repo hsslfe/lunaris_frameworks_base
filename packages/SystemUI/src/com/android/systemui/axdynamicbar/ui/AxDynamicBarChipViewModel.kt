@@ -315,6 +315,8 @@ constructor(
             } else {
                 keyguardEnabled || (pillEnabled && state?.allEvents?.any { it is IslandEvent.Media } == true)
             }
+        }.combine(interactor.isBouncerShowing) { visible, bouncer ->
+            visible && !bouncer
         }.distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 

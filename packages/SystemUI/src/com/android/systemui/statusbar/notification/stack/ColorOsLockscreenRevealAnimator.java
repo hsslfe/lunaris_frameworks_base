@@ -73,6 +73,7 @@ final class ColorOsLockscreenRevealAnimator {
     private boolean mActive;
     private boolean mRevealed;
     private boolean mEffectiveActive;
+    private boolean mSuppressForBouncer;
     private boolean mRunning;
     private boolean mSettledRevealed;
     private boolean mFinishedForInteraction;
@@ -111,9 +112,50 @@ final class ColorOsLockscreenRevealAnimator {
 
     void prepareFrame(boolean onLockscreen, boolean dozing, boolean pulsing,
             float dozeAmount, float fractionToShade) {
+        final AxDynamicBarColorOsController controller =
+                AxDynamicBarColorOsController.getOrNull();
+        final boolean blockedByBouncer = onLockscreen && controller != null
+                && controller.isRevealBlockedByBouncer();
+        if (blockedByBouncer) {
+            // Never fall back to a fully visible native stack during the PIN
+            // handoff, even if its asynchronous reveal state is still stale.
+            if (!mSuppressForBouncer) {
+                // Stop transient spring work while auth owns the surface.
+                // Keep the session so a cancelled bouncer can return without
+                // replaying the cascade from the bottom of the screen.
+                for (int i = 0; i < mItems.size(); i++) {
+                    ItemMotion item = mItems.valueAt(i);
+                    final float target = mRevealed ? 1f : 0f;
+                    item.snap(target);
+                    item.target = target;
+                }
+                mRunning = false;
+                setClippingRelaxed(false);
+                mSettledRevealed = mRevealed;
+                mFinishedForInteraction = false;
+            }
+            mSuppressForBouncer = true;
+            mEffectiveActive = false;
+            AxDynamicBarColorOsController.updateMediaBlurFraction(0f);
+            return;
+        }
+        if (mSuppressForBouncer && !mRevealed) {
+            // A completed auth handoff has collapsed the pill. Do not replay
+            // outgoing notification cards on the first returning frame.
+            for (int i = 0; i < mItems.size(); i++) {
+                ItemMotion item = mItems.valueAt(i);
+                item.snap(0f);
+                item.target = 0f;
+                applyTransientBlur(mItems.keyAt(i), 0f);
+            }
+        }
+        mSuppressForBouncer = false;
+
+        // A short swipe can produce a non-zero fraction before returning to
+        // the lockscreen. Retain the reveal springs instead of snapping to
+        // the ordinary stack for that transient frame.
         final boolean effectiveActive = mActive && onLockscreen && !pulsing
-                && fractionToShade == 0f
-                && mHost.getVisibility() == View.VISIBLE;
+                && fractionToShade < 1f;
         mEffectiveActive = effectiveActive;
         if (!effectiveActive) {
             if (mRunning || !mItems.isEmpty() || mClippingRelaxed) {
@@ -123,6 +165,9 @@ final class ColorOsLockscreenRevealAnimator {
             return;
         }
 
+        // A temporary invisible host during a layout/gesture is not a new
+        // reveal session. Keep its per-row motion until it is visible again.
+        if (mHost.getVisibility() != View.VISIBLE) return;
         updateAnchorCoordinates();
 
         mOrderedChildren.clear();
@@ -144,7 +189,9 @@ final class ColorOsLockscreenRevealAnimator {
 
         for (int i = mItems.size() - 1; i >= 0; i--) {
             View v = mItems.keyAt(i);
-            if (!mOrderedChildren.contains(v)) {
+            // Clock/stack relayout can transiently hide or zero the alpha
+            // of an attached row. Do not restart its reveal from the pill.
+            if (v.getParent() != mHost) {
                 mItems.valueAt(i).snap(1f);
                 applyTransientBlur(v, 1f);
                 mItems.removeAt(i);
@@ -210,7 +257,7 @@ final class ColorOsLockscreenRevealAnimator {
     }
 
     boolean shouldBlockTouch() {
-        return mEffectiveActive && !mRevealed;
+        return mSuppressForBouncer || (mEffectiveActive && !mRevealed);
     }
 
     boolean isRevealedAndActive() {
@@ -218,6 +265,7 @@ final class ColorOsLockscreenRevealAnimator {
     }
 
     boolean shouldDraw(View child) {
+        if (mSuppressForBouncer && child instanceof ExpandableView) return false;
         if (!mEffectiveActive || !(child instanceof ExpandableView)) {
             return true;
         }
@@ -314,6 +362,7 @@ final class ColorOsLockscreenRevealAnimator {
     }
 
     void cancel() {
+        mSuppressForBouncer = false;
         mEffectiveActive = false;
         mFinishedForInteraction = false;
         mSettledRevealed = false;

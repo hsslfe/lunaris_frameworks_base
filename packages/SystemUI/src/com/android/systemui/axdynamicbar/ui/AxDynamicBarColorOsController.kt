@@ -108,82 +108,36 @@ constructor(
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
 
-    private val hasRevealablePill: StateFlow<Boolean> =
+    // Keep the reveal session through a partial lockscreen drag. The generic
+    // panel-expanded flag also changes during an interrupted unlock gesture;
+    // it is not a reliable indication that the lockscreen has been left.
+    private val stackGatingState: StateFlow<Pair<Boolean, Boolean>> =
         combine(
-            interactor.uiState.map { it.shouldShow }.distinctUntilChanged(),
-            hasRevealableEvents,
-        ) { shouldShow, hasEvents ->
-            shouldShow && hasEvents
-        }
-            .distinctUntilChanged()
-            .stateIn(applicationScope, SharingStarted.Eagerly, false)
-
-    private val stackGatingState: StateFlow<Pair<Boolean, Boolean>> = run {
-        val lockscreenOrAod =
-            combine(
-                isModeActive,
-                interactor.isOnKeyguard,
-                interactor.isBouncerShowing,
-            ) { modeActive, onKeyguard, bouncer ->
-                modeActive && onKeyguard && !bouncer
-            }
-        val shadeClosed =
-            combine(
-                interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
-                interactor.isPanelExpanded,
-                keyguardExpansion.isExpanded,
-            ) { qsOpen, panelExpanded, kgExpanded ->
-                !qsOpen && !panelExpanded && !kgExpanded
-            }
-        combine(
-            lockscreenOrAod,
-            shadeClosed,
-            hasRevealableEvents,
-            _isRevealed,
-        ) { onKg, closed, hasEvents, revealed ->
-            val active = onKg && closed && (hasEvents || revealed)
-            active to (active && revealed)
+            isModeActive,
+            interactor.isOnKeyguard,
+            interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
+            keyguardExpansion.isExpanded,
+            combine(interactor.isBouncerShowing, hasRevealableEvents, _isRevealed) {
+                    bouncer, hasEvents, revealed ->
+                Triple(bouncer, hasEvents, revealed)
+            },
+        ) { enabled, onKeyguard, qsOpen, panelExpanded, (bouncer, hasEvents, revealed) ->
+            val active = enabled && onKeyguard && !qsOpen && (hasEvents || revealed)
+            active to (active && revealed && !bouncer && !panelExpanded)
         }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false to false)
-    }
 
-    /**
-     * True while ColorOS mode is keeping lockscreen notifications/media tucked behind the pill
-     * (including across doze/AOD so large clock does not flicker on screen wake).
-     */
-    val isHidingClockNotifications: StateFlow<Boolean> = run {
-        val lockscreenOrAod =
-            combine(
-                isModeActive,
-                interactor.isOnKeyguard,
-                interactor.isBouncerShowing,
-            ) { modeActive, onKeyguard, bouncer ->
-                modeActive && onKeyguard && !bouncer
-            }
-        val shadeClosed =
-            combine(
-                interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
-                interactor.isPanelExpanded,
-                keyguardExpansion.isExpanded,
-            ) { qsOpen, panelExpanded, kgExpanded ->
-                !qsOpen && !panelExpanded && !kgExpanded
-            }
-        combine(
-            lockscreenOrAod,
-            shadeClosed,
-            hasRevealableEvents,
-            _isRevealed,
-        ) { onKg, closed, hasEvents, revealed ->
-            onKg && closed && hasEvents && !revealed
-        }
+    /** Clock layout follows the same presentation state as the notification stack. */
+    val isHidingClockNotifications: StateFlow<Boolean> =
+        stackGatingState.map { (active, revealed) -> active && !revealed }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)
-    }
 
     init {
         INSTANCE = this
         val (initActive, initRevealed) = stackGatingState.value
+        _hidingClockNotificationsStatic.value = initActive && !initRevealed
         notifyListeners(initActive, initRevealed)
 
         combine(
@@ -203,11 +157,10 @@ constructor(
 
         combine(
             interactor.qsExpansion.map { it > 0f }.distinctUntilChanged(),
-            interactor.isPanelExpanded,
             keyguardExpansion.isExpanded,
-            hasRevealablePill,
-        ) { qsOpen, panelExpanded, kgExpanded, hasPill ->
-            !qsOpen && !panelExpanded && !kgExpanded && hasPill
+            hasRevealableEvents,
+        ) { qsOpen, kgExpanded, hasEvents ->
+            !qsOpen && !kgExpanded && hasEvents
         }
             .distinctUntilChanged()
             .onEach { canStayRevealed ->
@@ -217,18 +170,22 @@ constructor(
 
         stackGatingState
             .onEach { (active, revealed) ->
+                val hiding = active && !revealed
+                val clockChanged = _hidingClockNotificationsStatic.value != hiding
+                // Publish the clock policy before the stack listener schedules
+                // a draw, so both observe the same reveal/collapse state.
+                _hidingClockNotificationsStatic.value = hiding
                 if (!active) updateMediaBlurFraction(1f)
                 notifyListeners(active, revealed)
-            }
-            .launchIn(applicationScope)
-
-        isHidingClockNotifications
-            .onEach { hiding ->
-                _hidingClockNotificationsStatic.value = hiding
-                notifyClockListeners(hiding)
+                if (clockChanged) notifyClockListeners(hiding)
             }
             .launchIn(applicationScope)
     }
+
+    // The draw path must also honour the current bouncer state before the
+    // asynchronous stack/clock flow has delivered its next value.
+    fun isRevealBlockedByBouncer(): Boolean =
+        isModeActive.value && interactor.isOnKeyguard.value && interactor.isBouncerShowing.value
 
     fun isStackGatingActive(): Boolean = stackGatingState.value.first
 
