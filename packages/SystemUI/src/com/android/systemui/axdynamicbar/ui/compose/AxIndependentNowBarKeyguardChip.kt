@@ -220,6 +220,7 @@ internal fun IndependentNowBarKeyguardChip(
     val musicPillEnabled by viewModel.isKeyguardMusicPillEnabled.collectAsStateWithLifecycle()
     val nowBarStyle by viewModel.nowBarAppearance.collectAsStateWithLifecycle()
     val isDozing by viewModel.interactor.isDozing.collectAsStateWithLifecycle()
+    val isBouncerShowing by viewModel.isBouncerShowing.collectAsStateWithLifecycle()
     val keyguardBatteryChipMode by viewModel.keyguardBatteryChipMode.collectAsStateWithLifecycle()
     val batteryInfo by viewModel.keyguardBatteryInfo.collectAsStateWithLifecycle()
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
@@ -244,7 +245,8 @@ internal fun IndependentNowBarKeyguardChip(
         // null immediately. Keep the last expanded content through the exit
         // animation rather than collapsing an empty panel down to the pill.
         var lastExpandedState by remember { mutableStateOf<AxDynamicBarChipState?>(null) }
-        var collapsedHostReady by remember { mutableStateOf(true) }
+        var collapsedHostReady by remember { mutableStateOf(!isKeyguardExpanded) }
+        var activityCollapseGeneration by remember { mutableStateOf(0) }
         LaunchedEffect(isKeyguardExpanded) {
             if (isKeyguardExpanded) collapsedHostReady = false
         }
@@ -261,6 +263,11 @@ internal fun IndependentNowBarKeyguardChip(
                 // Wait for the collapsed native anchor before drawing the pill.
                 withFrameNanos { }
                 if (!viewModel.keyguardExpansion.isExpanded.value) {
+                    // Only a completed activity exit can trigger the landing motion.
+                    // Initial composition and cancelled exits must not bounce the pill.
+                    if (!collapsedHostReady && viewModel.keyguardExpansion.canShow.value) {
+                        activityCollapseGeneration++
+                    }
                     collapsedHostReady = true
                 }
             }
@@ -292,12 +299,43 @@ internal fun IndependentNowBarKeyguardChip(
         val impactScaleY = remember { Animatable(1f) }
         val impactOffsetYDp = remember { Animatable(0f) }
         var wasColorOsRevealed by remember { mutableStateOf(false) }
+        var handledActivityCollapse by remember { mutableStateOf(0) }
 
-        LaunchedEffect(isKeyguardColorOsRevealed, isKeyguardColorOsActive, isKeyguardChipVisible) {
-            val justCollapsed = wasColorOsRevealed && !isKeyguardColorOsRevealed
+        LaunchedEffect(
+            isKeyguardColorOsRevealed,
+            isKeyguardColorOsActive,
+            isKeyguardChipVisible,
+            isKeyguardExpanded,
+            collapsedHostReady,
+            activityCollapseGeneration,
+            isBouncerShowing,
+            isDozing,
+        ) {
+            val colorOsCollapsed = wasColorOsRevealed && !isKeyguardColorOsRevealed
             wasColorOsRevealed = isKeyguardColorOsRevealed
-            if (justCollapsed && isKeyguardColorOsActive && isKeyguardChipVisible) {
-                delay(155L)
+            val activityCollapsed = handledActivityCollapse != activityCollapseGeneration
+            handledActivityCollapse = activityCollapseGeneration
+
+            // A rapid reopen or another keyguard transition cancels the old
+            // landing animation and restores neutral transforms.
+            impactScaleX.snapTo(1f)
+            impactScaleY.snapTo(1f)
+            impactOffsetYDp.snapTo(0f)
+
+            if (isKeyguardExpanded || !collapsedHostReady || !isKeyguardChipVisible ||
+                isKeyguardColorOsRevealed || isBouncerShowing || isDozing
+            ) return@LaunchedEffect
+
+            if (activityCollapsed || (colorOsCollapsed && isKeyguardColorOsActive)) {
+                // Start once the returning pill is visible, using the same
+                // impact and spring as the ColorOS notification collapse.
+                delay(if (isKeyguardColorOsActive) 155L else 110L)
+                if (viewModel.keyguardExpansion.isExpanded.value ||
+                    !viewModel.isKeyguardChipVisible.value ||
+                    viewModel.isBouncerShowing.value ||
+                    viewModel.interactor.isDozing.value ||
+                    viewModel.isKeyguardColorOsRevealed.value
+                ) return@LaunchedEffect
                 coroutineScope {
                     launch {
                         impactScaleX.animateTo(
@@ -330,10 +368,6 @@ internal fun IndependentNowBarKeyguardChip(
                         )
                     }
                 }
-            } else if (isKeyguardColorOsRevealed || !isKeyguardColorOsActive || !isKeyguardChipVisible) {
-                impactScaleX.snapTo(1f)
-                impactScaleY.snapTo(1f)
-                impactOffsetYDp.snapTo(0f)
             }
         }
 
