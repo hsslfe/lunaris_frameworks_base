@@ -1800,20 +1800,20 @@ private fun SportsChipTeamBadge(
     }
 }
 
-private enum class ActionIcon { PLAY, PAUSE, STOP, SKIP_PREV, SKIP_NEXT }
+private enum class NowBarActionIcon { PLAY, PAUSE, STOP, SKIP_PREV, SKIP_NEXT }
 
 private data class NowBarChipAction(
-    val icon: ActionIcon,
+    val icon: NowBarActionIcon,
     val perform: (AxDynamicBarChipViewModel, IslandEvent, Context) -> Unit,
 )
 
 private fun actionsFor(event: IslandEvent, context: Context): List<NowBarChipAction> = when (event) {
     is IslandEvent.Media -> listOf(
-        NowBarChipAction(ActionIcon.SKIP_PREV) { vm, _, _ -> vm.skipPrev() },
-        NowBarChipAction(if (event.isPlaying) ActionIcon.PAUSE else ActionIcon.PLAY) { vm, _, _ ->
+        NowBarChipAction(NowBarActionIcon.SKIP_PREV) { vm, _, _ -> vm.skipPrev() },
+        NowBarChipAction(if (event.isPlaying) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY) { vm, _, _ ->
             vm.togglePlayPause()
         },
-        NowBarChipAction(ActionIcon.SKIP_NEXT) { vm, _, _ -> vm.skipNext() },
+        NowBarChipAction(NowBarActionIcon.SKIP_NEXT) { vm, _, _ -> vm.skipNext() },
     )
     is IslandEvent.AudioRecording -> {
         val classified = event.actions.map { it to it.action.classify(context, it.action.actionIntent?.creatorPackage ?: context.packageName) }
@@ -1822,11 +1822,11 @@ private fun actionsFor(event: IslandEvent, context: Context): List<NowBarChipAct
         listOfNotNull(
             pauseResume?.let { action ->
                 NowBarChipAction(
-                    if (event.state == RecordingState.RECORDING) ActionIcon.PAUSE else ActionIcon.PLAY,
+                    if (event.state == RecordingState.RECORDING) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
             stop?.let { action ->
-                NowBarChipAction(ActionIcon.STOP) { _, _, ctx ->
+                NowBarChipAction(NowBarActionIcon.STOP) { _, _, ctx ->
                     action.action.actionIntent?.sendWithBal(ctx)
                 }
             },
@@ -1837,7 +1837,7 @@ private fun actionsFor(event: IslandEvent, context: Context): List<NowBarChipAct
         listOfNotNull(
             toggleAction?.let { action ->
                 NowBarChipAction(
-                    if (event.isPaused) ActionIcon.PLAY else ActionIcon.PAUSE,
+                    if (event.isPaused) NowBarActionIcon.PLAY else NowBarActionIcon.PAUSE,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
         )
@@ -1847,20 +1847,20 @@ private fun actionsFor(event: IslandEvent, context: Context): List<NowBarChipAct
         listOfNotNull(
             toggleAction?.let { action ->
                 NowBarChipAction(
-                    if (event.isRunning) ActionIcon.PAUSE else ActionIcon.PLAY,
+                    if (event.isRunning) NowBarActionIcon.PAUSE else NowBarActionIcon.PLAY,
                 ) { _, _, ctx -> action.action.actionIntent?.sendWithBal(ctx) }
             },
         )
     }
     is IslandEvent.Torch -> listOf(
-        NowBarChipAction(ActionIcon.STOP) { vm, event, _ -> vm.dismissEvent(event) },
+        NowBarChipAction(NowBarActionIcon.STOP) { vm, event, _ -> vm.dismissEvent(event) },
     )
     else -> emptyList()
 }
 
 @Composable
 private fun ActionButton(
-    icon: ActionIcon,
+    icon: NowBarActionIcon,
     color: Color,
     bgColor: Color,
     onClick: () -> Unit,
@@ -1868,11 +1868,11 @@ private fun ActionButton(
     iconSize: Dp = ActionIconSize,
 ) {
     val imageVector = when (icon) {
-        ActionIcon.PLAY -> Icons.Filled.PlayArrow
-        ActionIcon.PAUSE -> Icons.Filled.Pause
-        ActionIcon.STOP -> Icons.Filled.Stop
-        ActionIcon.SKIP_PREV -> Icons.Filled.SkipPrevious
-        ActionIcon.SKIP_NEXT -> Icons.Filled.SkipNext
+        NowBarActionIcon.PLAY -> Icons.Filled.PlayArrow
+        NowBarActionIcon.PAUSE -> Icons.Filled.Pause
+        NowBarActionIcon.STOP -> Icons.Filled.Stop
+        NowBarActionIcon.SKIP_PREV -> Icons.Filled.SkipPrevious
+        NowBarActionIcon.SKIP_NEXT -> Icons.Filled.SkipNext
     }
     Surface(
         onClick = onClick,
