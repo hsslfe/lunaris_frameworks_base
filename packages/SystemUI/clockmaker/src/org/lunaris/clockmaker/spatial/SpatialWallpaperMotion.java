@@ -97,7 +97,7 @@ public final class SpatialWallpaperMotion implements ParallaxTiltSensor.Listener
 
     public void setActive(boolean enabled, boolean animate) {
         requested = enabled;
-        enabled &= sensitivity > 0f && (interactive() || (paused && active));
+        enabled &= sensitivity > 0f && interactive();
         if (active == enabled) {
             if (!enabled && !animate) reset();
             return;

@@ -35,7 +35,6 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
     private float spatialScale = 1f;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean zoomMoving;
-    private boolean sleepPaused;
     private final Runnable zoomSettled = () -> {
         zoomMoving = false;
         updateMotionPause();
@@ -94,14 +93,8 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
         applyScale();
     }
 
-    public void setSleepPaused(boolean paused) {
-        if (sleepPaused == paused) return;
-        sleepPaused = paused;
-        updateMotionPause();
-    }
-
     private void updateMotionPause() {
-        motion.setPaused(zoomMoving || sleepPaused);
+        motion.setPaused(zoomMoving);
     }
 
     public void setActive(boolean active) { setActive(active, true); }
@@ -117,11 +110,11 @@ public final class SpatialEffectController implements ParallaxTiltSensor.Listene
     public void destroy() {
         requested = false;
         mainHandler.removeCallbacks(zoomSettled);
-        zoomMoving = sleepPaused = false;
+        zoomMoving = false;
         hasZoom = false;
         zoom = 1f;
         motion.destroy();
-        if (registered && tuner != null) tuner.removeTunable(tunable);
+        if (registered) tuner.removeTunable(tunable);
         registered = false;
         background = subject = null;
     }

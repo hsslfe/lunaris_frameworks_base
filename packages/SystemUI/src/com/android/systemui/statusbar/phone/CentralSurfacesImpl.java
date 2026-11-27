@@ -2846,9 +2846,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
     final WakefulnessLifecycle.Observer mWakefulnessObserver = new WakefulnessLifecycle.Observer() {
         @Override
         public void onFinishedGoingToSleep() {
-            if (mWallpaperDepthUtils != null) {
-                mWallpaperDepthUtils.onFinishedGoingToSleep();
-            }
             mCameraLauncherLazy.get().setLaunchingAffordance(false);
             releaseGestureWakeLock();
             mLaunchCameraWhenFinishedWaking = false;
@@ -2892,9 +2889,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
         @Override
         public void onStartedGoingToSleep() {
-            if (mWallpaperDepthUtils != null) {
-                mWallpaperDepthUtils.onStartedGoingToSleep();
-            }
             String tag = "CentralSurfaces#onStartedGoingToSleep";
             DejankUtils.startDetectingBlockingIpcs(tag);
 
@@ -2928,9 +2922,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
         @Override
         public void onStartedWakingUp() {
-            if (mWallpaperDepthUtils != null) {
-                mWallpaperDepthUtils.onStartedWakingUp();
-            }
             // Between onStartedWakingUp() and onFinishedWakingUp(), the system is changing the
             // display power mode. To avoid jank, animations should NOT run during these power
             // mode transitions, which means that whenever possible, animations should
@@ -2980,9 +2971,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
         @Override
         public void onFinishedWakingUp() {
-            if (mWallpaperDepthUtils != null) {
-                mWallpaperDepthUtils.onFinishedWakingUp();
-            }
             if (mShouldDelayLockscreenTransitionFromAod) {
                 mNotificationShadeWindowController.batchApplyWindowLayoutParams(
                         this::startLockscreenTransitionFromAod);
@@ -3077,9 +3065,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
         @Override
         public void onScreenTurnedOff() {
-            if (mWallpaperDepthUtils != null) {
-                mWallpaperDepthUtils.onScreenTurnedOff();
-            }
             Trace.beginSection("CentralSurfaces#onScreenTurnedOff");
             mFalsingCollector.onScreenOff();
             ScrimUtils.get(mContext).onScreenStateChange();
