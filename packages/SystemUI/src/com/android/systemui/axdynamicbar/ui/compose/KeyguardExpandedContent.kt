@@ -5,6 +5,7 @@ package com.android.systemui.axdynamicbar.ui.compose
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibilityScope
 
 import androidx.compose.animation.AnimatedContent
@@ -200,7 +201,6 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
     interactor: IslandActions,
     onCollapse: () -> Unit,
     hapticsViewModelFactory: SliderHapticsViewModel.Factory,
-    stabilizeMediaArtwork: Boolean = false,
 ) {
     if (event is IslandEvent.KeyguardIndication ||
         event is IslandEvent.AppSwitch ||
@@ -211,6 +211,12 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
     }
 
     val view = LocalView.current
+    // Animate the card, not the full-screen touch-dismiss surface. Scaling
+    // that surface exposes the wallpaper at the screen edges during expansion.
+    val cardMotion = Modifier.animateEnterExit(
+        enter = pillPanelEnter(TransformOrigin.Center, edge = 1),
+        exit = pillPanelExit(TransformOrigin.Center, edge = 1),
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -237,15 +243,16 @@ internal fun AnimatedVisibilityScope.KeyguardExpandedContent(
     ) {
         if (event is IslandEvent.Media) {
             KeyguardMediaPanel(
-                event, interactor, Modifier.align(Alignment.BottomCenter),
-                stabilizeMediaArtwork = stabilizeMediaArtwork,
+                event, interactor, Modifier.align(Alignment.BottomCenter).then(cardMotion),
             )
         } else {
-            when (event) {
-                is IslandEvent.Timer -> KeyguardTimerPanel(event, interactor)
-                is IslandEvent.Stopwatch -> KeyguardStopwatchPanel(event, interactor)
-                is IslandEvent.AudioRecording -> KeyguardAudioRecordingPanel(event, interactor)
-                else -> KeyguardGenericPanel(event, interactor, hapticsViewModelFactory)
+            Box(modifier = cardMotion, contentAlignment = Alignment.Center) {
+                when (event) {
+                    is IslandEvent.Timer -> KeyguardTimerPanel(event, interactor)
+                    is IslandEvent.Stopwatch -> KeyguardStopwatchPanel(event, interactor)
+                    is IslandEvent.AudioRecording -> KeyguardAudioRecordingPanel(event, interactor)
+                    else -> KeyguardGenericPanel(event, interactor, hapticsViewModelFactory)
+                }
             }
         }
     }
@@ -357,18 +364,9 @@ private fun KeyguardMediaPanel(
     event: IslandEvent.Media,
     interactor: IslandActions,
     modifier: Modifier,
-    stabilizeMediaArtwork: Boolean,
 ) {
-    // Only Now Bar retains images across pause/metadata refreshes. Classic
-    // Dynamic Bar keeps the original direct-Drawable transitions.
-    val artworkFrame = if (stabilizeMediaArtwork)
-        rememberKeyguardMediaArtwork(event)
-    else KeyguardMediaArtworkFrame("classic", event.albumArt)
-    val albumArt = artworkFrame.drawable
-    val colors = rememberMediaColors(
-        if (stabilizeMediaArtwork) event.copy(albumArt = albumArt) else event,
-        useAlbumArt = true,
-    )
+    val artworkFrame = rememberKeyguardMediaArtwork(event)
+    val colors = rememberMediaColors(event.copy(albumArt = artworkFrame.drawable), useAlbumArt = true)
     val motionScheme = MaterialTheme.motionScheme
 
     BoxWithConstraints(
@@ -420,18 +418,10 @@ private fun KeyguardMediaPanel(
                     )
                 }
 
-                if (!stabilizeMediaArtwork) {
-                    // Preserve the original Dynamic Bar artwork transition.
-                    KeyguardMediaBackdropOverlay(colors.accent)
-                }
             }
         }
-        if (stabilizeMediaArtwork) {
-            // Now Bar: keep both overlays in a stable layer while album art
-            // crossfades underneath. The whole card must not fade or flash
-            // when a player updates the artwork on pause / track switch.
-            KeyguardMediaBackdropOverlay(colors.accent)
-        }
+        // Keep the tint stable while the two artwork frames crossfade underneath.
+        KeyguardMediaBackdropOverlay(colors.accent)
 
         Column(
             modifier = Modifier
@@ -612,8 +602,7 @@ private fun KeyguardMediaPanel(
                         var hadSeekableMedia by remember(event.packageName) {
                             mutableStateOf(event.duration > 0L)
                         }
-                        if (stabilizeMediaArtwork && event.duration > 0L &&
-                            !hadSeekableMedia) {
+                        if (event.duration > 0L && !hadSeekableMedia) {
                             hadSeekableMedia = true
                         }
 
@@ -688,11 +677,10 @@ private fun KeyguardMediaPanel(
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             }
-                        } else if (stabilizeMediaArtwork && hadSeekableMedia) {
+                        } else if (hadSeekableMedia) {
                             // Reserve the identical progress-row height during
                             // a metadata gap. This is invisible, not seekable,
                             // and keeps Now Bar artwork, controls and card still.
-                            // Classic Dynamic Bar's layout remains unchanged.
                             Spacer(Modifier.height(SpaceMd))
                             Spacer(Modifier.height(SpaceSection))
                             Spacer(Modifier.height(SpaceXs))

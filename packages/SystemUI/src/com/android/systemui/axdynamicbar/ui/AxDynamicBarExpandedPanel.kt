@@ -5,6 +5,8 @@ import android.graphics.PixelFormat
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
+import com.android.systemui.axdynamicbar.ui.compose.pillPanelEnter
+import com.android.systemui.axdynamicbar.ui.compose.pillPanelExit
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
@@ -323,26 +325,19 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
     }
 
     val hasExpandableEvents = chipState?.allEvents?.any { it !is IslandEvent.AospChip } == true
-    LaunchedEffect(hasExpandableEvents, isExpanded) {
-        if (!hasExpandableEvents && isExpanded) {
-            viewModel.statusBarExpansion.collapse()
+    val lastExpandedState = remember { mutableStateOf<AxDynamicBarChipState?>(null) }
+    LaunchedEffect(isExpanded, chipState, expandedVisible.isIdle, expandedVisible.currentState) {
+        if (isExpanded && hasExpandableEvents) lastExpandedState.value = chipState
+        else if (!isExpanded && expandedVisible.isIdle && !expandedVisible.currentState) {
+            lastExpandedState.value = null
         }
     }
-
     val origin = TransformOrigin(0.5f, 0f)
 
     AnimatedVisibility(
         visibleState = expandedVisible,
-        enter = fadeIn(tween(250)) + scaleIn(
-            animationSpec = tween(350),
-            initialScale = 0.4f,
-            transformOrigin = origin,
-        ),
-        exit = fadeOut(tween(200)) + scaleOut(
-            animationSpec = tween(250),
-            targetScale = 0.4f,
-            transformOrigin = origin,
-        ),
+        enter = pillPanelEnter(origin, edge = -1),
+        exit = pillPanelExit(origin, edge = -1),
     ) {
         Box(
             modifier = Modifier
@@ -392,7 +387,8 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
                 .padding(top = topPad),
             contentAlignment = Alignment.TopCenter,
         ) {
-            chipState?.let { state ->
+            val panelState = if (isExpanded && hasExpandableEvents) chipState else lastExpandedState.value
+            panelState?.let { state ->
                 val filtered = state.allEvents.filter { it !is IslandEvent.AospChip }
                 if (filtered.isEmpty()) return@let
                 Box(

@@ -55,9 +55,7 @@ constructor(
                 // During a track switch the media event can momentarily vanish.
                 // A short cancellable grace period avoids collapsing the whole
                 // Now Bar and flashing the wallpaper for a transient empty list.
-                // Dynamic Bar retains its original immediate behaviour.
-                if (!present && (interactor.settings.nowBarAppearance.value.enabled ||
-                        interactor.settings.isKeyguardMusicPillEnabled.value)) {
+                if (!present && _intent.value) {
                     delay(280L)
                 }
                 emit(present)
