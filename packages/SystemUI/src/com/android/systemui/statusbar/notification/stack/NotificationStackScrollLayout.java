@@ -4292,11 +4292,18 @@ public class NotificationStackScrollLayout
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (mColorOsRevealAnimator.shouldBlockTouch()) {
-            return false;
-        }
-        if (mColorOsOutsideTapPending && mColorOsRevealAnimator.isRevealedAndActive()) {
-            return true;
+        // Always deliver cancellation to an existing child gesture, even if the
+        // reveal state changes during the keyguard handoff.
+        if (ev.getActionMasked() != ACTION_CANCEL) {
+            if (mColorOsRevealAnimator.shouldBlockTouch()) {
+                return false;
+            }
+            // The shade window observes outside taps before dispatching here.
+            // Do not claim their DOWN and then abandon the stream after touch
+            // slop: the keyguard must own an outside swipe from its first event.
+            if (mColorOsOutsideTapPending && mColorOsRevealAnimator.isRevealedAndActive()) {
+                return false;
+            }
         }
         if (ev.getActionMasked() == ACTION_DOWN
                 && mColorOsRevealAnimator.isRevealedAndActive()
@@ -6586,6 +6593,10 @@ public class NotificationStackScrollLayout
                     float dy = event.getRawY() - mColorOsOutsideDownY;
                     if (dx * dx + dy * dy > mTouchSlop * mTouchSlop) {
                         mColorOsOutsideTapPending = false;
+                        // Hand the drag to keyguard with the reveal already
+                        // settled instead of moving cards and the lockscreen
+                        // independently while the pointer is held.
+                        mColorOsRevealAnimator.finishForInteraction();
                     }
                 }
                 return false;
