@@ -89,6 +89,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -226,16 +227,26 @@ fun AxDynamicBarKeyguardChip(
     Box(modifier = modifier) {
 
         var lastPanelEvent by remember { mutableStateOf<IslandEvent?>(null) }
-        LaunchedEffect(isKeyguardExpanded, panelEvent) {
-            if (isKeyguardExpanded && panelEvent != null) lastPanelEvent = panelEvent
+        var collapsedHostReady by remember { mutableStateOf(!isKeyguardExpanded) }
+        LaunchedEffect(isKeyguardExpanded) {
+            if (isKeyguardExpanded) collapsedHostReady = false
+        }
+        if (isKeyguardExpanded && panelEvent != null) {
+            lastPanelEvent = panelEvent
         }
         val expandedVisibleState = remember { MutableTransitionState(false) }
         expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded &&
             (panelEvent != null || lastPanelEvent != null)
-        LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
-            if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
-                if (!isKeyguardExpanded) lastPanelEvent = null
+        LaunchedEffect(isKeyguardExpanded, expandedVisibleState.isIdle, expandedVisibleState.currentState) {
+            if (!isKeyguardExpanded && expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
+                lastPanelEvent = null
                 viewModel.keyguardExpansion.notifyCollapseSettled()
+                // The native host must be back at the collapsed anchor before
+                // the pill can appear again. A rapid reopen cancels this wait.
+                withFrameNanos { }
+                if (!viewModel.keyguardExpansion.isExpanded.value) {
+                    collapsedHostReady = true
+                }
             }
         }
         AnimatedVisibility(
@@ -306,9 +317,14 @@ fun AxDynamicBarKeyguardChip(
             }
         }
 
+        // As with independent Now Bar, do not leave an outgoing pill in
+        // a host that is being resized to the expanded panel's constraints.
+        if (!isKeyguardExpanded && collapsedHostReady && expandedVisibleState.isIdle &&
+            !expandedVisibleState.currentState
+        ) {
         val chipEnterDelay = if (isKeyguardColorOsActive) 130 else 300
         AnimatedVisibility(
-            visible = isKeyguardChipVisible && !isKeyguardExpanded && !isKeyguardColorOsRevealed,
+            visible = isKeyguardChipVisible && !isKeyguardColorOsRevealed,
             enter = fadeIn(
                 tween(
                     durationMillis = if (isKeyguardColorOsActive) 140 else 200,
@@ -486,6 +502,7 @@ fun AxDynamicBarKeyguardChip(
                     modifier,
                 )
             }
+        }
         }
     }
 }
