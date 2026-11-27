@@ -69,7 +69,10 @@ constructor(
         interactor.uiState
             .map { uiState ->
                 if (!uiState.shouldShow) return@map null
-                val alert = uiState.notificationAlert
+                // Keep pending heads-up content available after biometric feedback ends.
+                val alert = uiState.notificationAlert?.takeUnless {
+                    uiState.events.any { it is IslandEvent.BiometricUnlock }
+                }
                 val topEvent = uiState.topEvent ?: alert ?: return@map null
                 AxDynamicBarChipState(
                     event = topEvent,

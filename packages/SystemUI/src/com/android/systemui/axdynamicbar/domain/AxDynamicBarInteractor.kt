@@ -356,8 +356,11 @@ constructor(
                 val prevPinnedId =
                     current.events.getOrNull(current.pinnedEventIndex)?.id
 
+                // Unlock feedback temporarily owns the primary island.
+                val unlockIndex = events.indexOfFirst { it is IslandEvent.BiometricUnlock }
                 val pinnedIndex =
                     when {
+                        unlockIndex >= 0 -> unlockIndex
                         hasNewEvents -> {
                             val currentIds = current.events.map { it.id }.toSet()
                             events.indexOfFirst { it.id !in currentIds }.coerceAtLeast(0)

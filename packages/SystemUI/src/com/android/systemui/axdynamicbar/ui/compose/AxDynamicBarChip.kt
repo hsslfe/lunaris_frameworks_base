@@ -266,6 +266,7 @@ fun AxDynamicBarChip(
                     }
                 val useCircleStyle = chipStyle == 1 &&
                         !isAlert &&
+                        event !is IslandEvent.BiometricUnlock &&
                         event !is IslandEvent.AudioRecording &&
                         event !is IslandEvent.Timer &&
                         event !is IslandEvent.Stopwatch &&
