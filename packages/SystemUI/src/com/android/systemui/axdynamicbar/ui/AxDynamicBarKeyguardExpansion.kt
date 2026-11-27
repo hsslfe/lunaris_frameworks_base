@@ -53,6 +53,12 @@ constructor(
     private enum class Target { EVENT, CHARGING }
     private val target = MutableStateFlow<Target?>(null)
 
+    @Volatile private var panelHostExpanded = false
+
+    fun setPanelHostExpanded(expanded: Boolean) {
+        panelHostExpanded = expanded
+    }
+
     val batteryInfo: StateFlow<KeyguardBatteryInfo> =
         combine(
             batteryInteractor.level,
@@ -160,6 +166,7 @@ constructor(
     }
 
     init {
+        instance = this
         canShow
             .onEach { if (!it) collapse() }
             .launchIn(applicationScope)
@@ -195,5 +202,21 @@ constructor(
 
     fun toggle() {
         if (target.value != null) collapse() else expand()
+    }
+
+    companion object {
+        @Volatile private var instance: AxDynamicBarKeyguardExpansion? = null
+
+        /** Suppress native notifications for the ordinary lockscreen panel only. */
+        fun shouldSuppressLockscreenNotifications(): Boolean {
+            val expansion = instance ?: return false
+            val interactor = expansion.interactor
+            return interactor.isOnKeyguard.value &&
+                !interactor.isDozing.value &&
+                interactor.qsExpansion.value <= 0f &&
+                !interactor.isPanelExpanded.value &&
+                (expansion.panelHostExpanded || expansion.isExpanded.value ||
+                    (expansion.target.value != null && expansion.canShow.value))
+        }
     }
 }

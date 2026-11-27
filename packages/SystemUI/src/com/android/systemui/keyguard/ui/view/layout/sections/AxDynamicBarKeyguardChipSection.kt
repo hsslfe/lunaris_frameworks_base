@@ -170,6 +170,9 @@ constructor(
                                 }
                                 applyCollapsedLp(composeView, viewModel.isLowUdfps.value)
                                 setHiddenViewsVisibility(constraintLayout, View.VISIBLE)
+                                viewModel.keyguardExpansion.setPanelHostExpanded(false)
+                                constraintLayout.rootView
+                                    .findViewById<View>(R.id.shared_notification_container)?.invalidate()
                             }
                         }
                     }
@@ -245,6 +248,9 @@ constructor(
         scrim.animate().alpha(if (expanded) 1f else 0f).setDuration(200L).start()
         if (expanded) {
             expandedExitPending = true
+            viewModel.keyguardExpansion.setPanelHostExpanded(true)
+            constraintLayout.rootView
+                .findViewById<View>(R.id.shared_notification_container)?.invalidate()
         } else if (!expanded && expandedExitPending) {
             // The Compose expanded panel is still fading away. Do not change
             // wallpaper depth, pre-draw suppression or parent constraints yet.
@@ -474,6 +480,9 @@ constructor(
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
         expandedExitPending = false
+        viewModel.keyguardExpansion.setPanelHostExpanded(false)
+        constraintLayout.rootView
+            .findViewById<View>(R.id.shared_notification_container)?.invalidate()
         TransitionManager.endTransitions(constraintLayout)
         enforceAction?.let { ScrimUtils.get().removeKeyguardPreDrawAction(it) }
         enforceAction = null
