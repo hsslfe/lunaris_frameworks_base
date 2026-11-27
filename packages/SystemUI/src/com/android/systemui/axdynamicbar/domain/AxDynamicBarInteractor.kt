@@ -232,6 +232,7 @@ constructor(
                     else if (newState != StatusBarState.KEYGUARD) prioritizeMusicOnKeyguardEntry = false
                     _isOnKeyguard.value = newState == StatusBarState.KEYGUARD
                     repository.setNowBarLockscreenActive(_isOnKeyguard.value && !_isDozing.value)
+                    refreshNowBarNotifications()
                     if (newState != StatusBarState.SHADE) dismissNotificationAlert()
                     updateChipVisibility()
                 }
@@ -287,8 +288,11 @@ constructor(
                 Triple(enabled || sources != null, keyguardEnabled, pillEnabled)
             }.collect { (enabled, keyguardEnabled, pillEnabled) ->
                 if (!settings.isNotificationEventsActive()) dismissNotificationAlert()
-                if (enabled || keyguardEnabled || pillEnabled) repository.startListening()
-                else {
+                if (enabled || keyguardEnabled || pillEnabled) {
+                    repository.startListening()
+                    refreshNowBarNotifications()
+                } else {
+                    repository.notification.updateVisibleNotifications = false
                     repository.stopListening()
                     autoDismissJobs.values.forEach { it.cancel() }
                     autoDismissJobs.clear()
@@ -319,10 +323,10 @@ constructor(
                     pill to nowBar
                 }.combine(settings.isKeyguardColorOsStyleEnabled) { pair, colorOs -> Triple(pair.first, pair.second, colorOs) },
                 combine(_isOnKeyguard, _isDozing) { kg, doze -> kg to doze },
-            ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar, colorOs), (kg, _) ->
+            ) { raw, _, (enabled, kgEnabled), (pillEnabled, nowBar, _), (kg, _) ->
                 raw.filter { e ->
                     if (kg && nowBar.enabled) {
-                        nowBar.shows(e) || (colorOs && e is IslandEvent.Notification && settings.isEventEnabled(e, true))
+                        nowBar.shows(e) || (e is IslandEvent.Notification && settings.isNowBarNotificationEnabled())
                     } else if (kg && e is IslandEvent.Media) {
                         // The lock screen music pill has its own switch and event source.
                         pillEnabled
@@ -705,11 +709,23 @@ constructor(
             }
     }
 
+    private fun refreshNowBarNotifications() {
+        val active = _isOnKeyguard.value && settings.isNowBarNotificationEnabled()
+        repository.notification.updateVisibleNotifications = active
+        if (active) {
+            repository.notification.refreshLockscreenNotifications(
+                notifCollection.allNotifs.map { it.sbn },
+            )
+        }
+    }
+
     private fun applyKeyguardNotificationPrivacy(
         event: IslandEvent.Notification,
     ): IslandEvent.Notification? {
         if (!lockscreenUserManager.shouldShowLockscreenNotifications()) return null
         val entry = notifCollection.getEntry(event.sbn.key)
+        // Do not show a Now Bar notification that cannot be validated against the live collection.
+        if (entry == null && settings.nowBarAppearance.value.enabled) return null
         if (entry != null && keyguardNotificationVisibilityProvider.shouldHideNotification(entry)) {
             return null
         }

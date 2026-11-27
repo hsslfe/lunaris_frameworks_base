@@ -883,11 +883,15 @@ private fun KeyguardChipBody(
 }
 
 @Composable
-private fun KeyguardNotificationPillIcon(
+internal fun KeyguardNotificationPillIcon(
     event: IslandEvent.Notification,
     accent: Color,
     contentColor: Color,
+    iconSize: Dp = MusicActionSize,
 ) {
+    val badgeSize = if (iconSize == MusicActionSize) NotifAvatarBadgeSize else (iconSize.value * 0.38f).dp
+    val appShape = if (iconSize == MusicActionSize) NotifAppIconShape else RoundedCornerShape((iconSize.value * 0.24f).dp)
+    val badgeShape = if (iconSize == MusicActionSize) NotifAvatarBadgeShape else RoundedCornerShape((badgeSize.value * 0.30f).dp)
     val showAvatar = !event.isRedacted && event.isConversation && event.senderIcon != null
     val mainIcon = if (showAvatar) event.senderIcon else event.appIcon
     val badgeIcon = if (showAvatar) event.appIcon else null
@@ -895,24 +899,24 @@ private fun KeyguardNotificationPillIcon(
 
     when {
         showAvatar && mainIcon != null -> {
-            Box(modifier = Modifier.size(MusicActionSize)) {
+            Box(modifier = Modifier.size(iconSize)) {
                 Image(
-                    bitmap = mainIcon.toSquareScaledBitmap(MusicActionSize),
+                    bitmap = mainIcon.toSquareScaledBitmap(iconSize),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(MusicActionSize)
+                        .size(iconSize)
                         .clip(CircleShape),
                     contentScale = ContentScale.Crop,
                 )
                 badgeIcon?.let { appDrawable ->
                     Image(
-                        bitmap = appDrawable.toScaledBitmap(NotifAvatarBadgeSize),
+                        bitmap = appDrawable.toScaledBitmap(badgeSize),
                         contentDescription = null,
                         modifier = Modifier
-                            .size(NotifAvatarBadgeSize)
+                            .size(badgeSize)
                             .align(Alignment.BottomEnd)
-                            .clip(NotifAvatarBadgeShape)
-                            .border(1.dp, badgeBorderColor, NotifAvatarBadgeShape),
+                            .clip(badgeShape)
+                            .border(1.dp, badgeBorderColor, badgeShape),
                         contentScale = ContentScale.Crop,
                     )
                 }
@@ -920,19 +924,19 @@ private fun KeyguardNotificationPillIcon(
         }
         mainIcon != null -> {
             Image(
-                bitmap = mainIcon.toScaledBitmap(MusicActionSize),
+                bitmap = mainIcon.toScaledBitmap(iconSize),
                 contentDescription = null,
                 modifier = Modifier
-                    .size(MusicActionSize)
-                    .clip(NotifAppIconShape),
+                    .size(iconSize)
+                    .clip(appShape),
                 contentScale = ContentScale.Crop,
             )
         }
         else -> {
             Box(
                 modifier = Modifier
-                    .size(MusicActionSize)
-                    .clip(NotifAppIconShape)
+                    .size(iconSize)
+                    .clip(appShape)
                     .background(lerp(accent, contentColor, AlphaSubtle).copy(alpha = 0.35f)),
                 contentAlignment = Alignment.Center,
             ) {

@@ -79,7 +79,7 @@ constructor(
 
     private fun isNowBarTypeEnabled(typeId: String): Boolean =
         settings.nowBarAppearance.value.sourceTypes?.contains(typeId) == true ||
-            (typeId == "notification" && settings.isNowBarColorOsNotificationEnabled())
+            (typeId == "notification" && settings.isNowBarNotificationEnabled())
 
     private fun isTypeEnabled(typeId: String): Boolean =
         settings.isEventSourceNeeded(typeId) || isNowBarTypeEnabled(typeId)

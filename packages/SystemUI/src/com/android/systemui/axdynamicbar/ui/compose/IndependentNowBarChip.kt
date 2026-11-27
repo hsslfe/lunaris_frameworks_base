@@ -453,7 +453,13 @@ fun IndependentNowBarChip(
                     travel = { 14.dp },
                     direction = { from, to -> swipe.direction(from, to, chipState.allEvents) },
                     durationMillis = 245,
-                ) { event, pageMotion ->
+                ) { pageEvent, pageMotion ->
+                    // Outgoing notification pages must use the current privacy-filtered event,
+                    // never a stale snapshot during a swipe, removal, or redaction change.
+                    val event = if (pageEvent is IslandEvent.Notification) {
+                        chipState.allEvents.firstOrNull { it.id == pageEvent.id } as? IslandEvent.Notification
+                            ?: return@SwipePageTransition
+                    } else pageEvent
                     val rawAccent = chipAccentColorFor(event)
                     val accent by animateColorAsState(
                         rawAccent,
@@ -487,7 +493,7 @@ fun IndependentNowBarChip(
                             chipState.allEvents, nowBarStyle.enabled, musicPillEnabled,
                         ) {
                             if (nowBarStyle.enabled || musicPillEnabled)
-                                chipState.eventCount
+                                if (nowBarStyle.enabled) chipState.allEvents.size else chipState.eventCount
                             else chipState.allEvents.count { it !is IslandEvent.Media }
                         }
                         CompositionLocalProvider(
@@ -515,6 +521,7 @@ fun IndependentNowBarChip(
                                 contentColor = contentColor,
                                 progress = progress,
                                 eventCount = keyguardEventCount,
+                                notificationCount = chipState.allEvents.count { it is IslandEvent.Notification },
                                 selectedEventIndex = chipState.pinnedIndex,
                                 viewModel = viewModel,
                                 nowBarStyle = nowBarStyle.takeIf { it.enabled },
@@ -547,6 +554,7 @@ private fun KeyguardChipBody(
     contentColor: Color,
     progress: Float?,
     eventCount: Int,
+    notificationCount: Int,
     selectedEventIndex: Int,
     viewModel: AxDynamicBarChipViewModel,
     nowBarStyle: AxLockscreenNowBarSettings? = null,
@@ -934,6 +942,61 @@ private fun KeyguardChipBody(
                             }
                         }
                     }
+                } else if (event is IslandEvent.Notification) {
+                    // Match the notification pill's avatar and app badge while adapting to Now Bar dimensions.
+                    val iconSize = (styledHeight.value * 0.62f).coerceIn(24f, 44f).dp
+                    Box(modifier = Modifier.size(iconSize), contentAlignment = Alignment.Center) {
+                        KeyguardNotificationPillIcon(event, accent, styledContentColor, iconSize)
+                        if (notificationCount > 1) {
+                            val countSize = (iconSize.value * 0.40f).coerceIn(12f, 16f).dp
+                            Box(
+                                modifier = Modifier.align(Alignment.TopStart)
+                                    .height(countSize).widthIn(min = countSize)
+                                    .background(RedAccent, CircleShape)
+                                    .border(1.dp, styledContentColor.copy(alpha = 0.45f), CircleShape)
+                                    .padding(horizontal = 2.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = if (notificationCount > 99) "99+" else notificationCount.toString(),
+                                    color = chipContentColorOn(RedAccent),
+                                    style = TsBadge.copy(fontSize = 9.sp),
+                                    lineHeight = 9.sp, maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(SpaceXs))
+                    val fallbackName = stringResource(R.string.ax_dynamic_bar_notification)
+                    val appName = event.appName.ifBlank { fallbackName }
+                    val primary = if (event.isRedacted) appName else
+                        event.senderName?.takeIf { event.isConversation && it.isNotBlank() }
+                            ?: event.title?.takeIf { it.isNotBlank() } ?: appName
+                    val summary = if (event.isRedacted) stringResource(R.string.ax_dynamic_bar_sensitive_content)
+                        else event.text?.takeIf { it.isNotBlank() }?.takeIfDistinctFrom(primary)
+                            ?: event.title?.takeIf { it.isNotBlank() }?.takeIfDistinctFrom(primary)
+                    val titleSp = (LocalNowBarTextFontSp.current ?: 13f).coerceIn(11f, 17f)
+                    val showSummary = nowBarStyle?.text != 2 && !summary.isNullOrBlank()
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                        Text(
+                            if (nowBarStyle?.text == 0 && showSummary) "$primary · $summary" else primary,
+                            color = styledContentColor,
+                            style = PillPrimary.copy(fontSize = titleSp.sp, lineHeight = (titleSp + 2f).sp),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (marqueeEnabled && !event.isRedacted) Modifier.basicMarquee(iterations = 1) else Modifier
+                            ),
+                        )
+                        if (showSummary && nowBarStyle?.text != 0) {
+                            val detailSp = (titleSp - 1f).coerceAtLeast(10f)
+                            Text(
+                                summary.orEmpty(), color = styledContentColor.copy(alpha = AlphaSecondary),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = detailSp.sp, lineHeight = (detailSp + 2f).sp),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 } else if (event is IslandEvent.Sports && event.team2Name.isNotEmpty()) {
                     SportsChipTeamBadge(event.team1Name, event.team1Icon, styledContentColor, sportsBadgeSize)
                     Spacer(Modifier.width(SpaceXs))
@@ -1028,7 +1091,7 @@ private fun KeyguardChipBody(
                     }
                 }
 
-                if (event !is IslandEvent.Media && event !is IslandEvent.Charging) {
+                if (event !is IslandEvent.Media && event !is IslandEvent.Charging && event !is IslandEvent.Notification) {
                     val actionsCtx = LocalContext.current
                     val actions = actionsFor(event, actionsCtx)
                     if (actions.isNotEmpty()) {

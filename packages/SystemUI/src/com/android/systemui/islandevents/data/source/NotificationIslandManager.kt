@@ -561,6 +561,15 @@ constructor(
             }
         }
 
+    /** Seed the lockscreen with existing notifications, without replaying known cards. */
+    fun refreshLockscreenNotifications(notifications: Collection<StatusBarNotification>) {
+        if (!listening || "notification" in disabledTypes) return
+        notifications.asSequence()
+            .filter { !it.isOngoing && !activeNotifications.containsKey(it.key) }
+            .sortedBy { it.postTime }
+            .forEach { scrimListener.onNotificationPosted(it) }
+    }
+
     fun startListening() {
         if (listening) return
         listening = true
