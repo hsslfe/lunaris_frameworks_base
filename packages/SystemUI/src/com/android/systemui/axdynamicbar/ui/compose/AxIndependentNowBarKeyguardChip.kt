@@ -377,6 +377,50 @@ internal fun IndependentNowBarKeyguardChip(
         if (!isKeyguardExpanded && collapsedHostReady && expandedVisibleState.isIdle &&
             !expandedVisibleState.currentState) {
         val swipe = remember(viewModel) { PillSwipeMotion(viewModel) }
+        var swipeLandingPage by remember { mutableStateOf<Any?>(null) }
+        val swipeLandingScaleX = remember { Animatable(1f) }
+        val swipeLandingScaleY = remember { Animatable(1f) }
+        val swipeLandingOffsetY = remember { Animatable(0f) }
+        LaunchedEffect(swipeLandingPage, isKeyguardChipVisible, isKeyguardColorOsRevealed, isDozing, isBouncerShowing) {
+            swipeLandingScaleX.snapTo(1f)
+            swipeLandingScaleY.snapTo(1f)
+            swipeLandingOffsetY.snapTo(0f)
+            if (!isKeyguardChipVisible || isKeyguardColorOsRevealed || isDozing || isBouncerShowing) {
+                swipe.clearLanding()
+                swipeLandingPage = null
+                return@LaunchedEffect
+            }
+            if (swipeLandingPage == null) return@LaunchedEffect
+
+            // Match the collapse impact without modifying the card's existing
+            // horizontal travel, drag spring, or fade timing.
+            coroutineScope {
+                launch {
+                    swipeLandingScaleX.animateTo(
+                        1.09f, tween(75, easing = FastOutSlowInEasing),
+                    )
+                    swipeLandingScaleX.animateTo(
+                        1f, spring(dampingRatio = 0.44f, stiffness = 420f),
+                    )
+                }
+                launch {
+                    swipeLandingScaleY.animateTo(
+                        0.87f, tween(75, easing = FastOutSlowInEasing),
+                    )
+                    swipeLandingScaleY.animateTo(
+                        1f, spring(dampingRatio = 0.44f, stiffness = 420f),
+                    )
+                }
+                launch {
+                    swipeLandingOffsetY.animateTo(
+                        3f, tween(75, easing = FastOutSlowInEasing),
+                    )
+                    swipeLandingOffsetY.animateTo(
+                        0f, spring(dampingRatio = 0.46f, stiffness = 400f),
+                    )
+                }
+            }
+        }
         val pillVisibility = remember { MutableTransitionState(false) }
         pillVisibility.targetState = isKeyguardChipVisible && !isKeyguardColorOsRevealed
         AnimatedVisibility(
@@ -409,6 +453,8 @@ internal fun IndependentNowBarKeyguardChip(
                 .pointerInput(viewModel, touchView, touchSlop, state?.event?.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                        swipe.clearLanding()
+                        swipeLandingPage = null
                         val start = down.position
                         val canSwipeUp = viewModel.colorOsController.canRevealFromNowBar()
                         val parent = if (canSwipeUp) touchView.parent else null
@@ -467,6 +513,11 @@ internal fun IndependentNowBarKeyguardChip(
                         }
                     }
                 }
+                .graphicsLayer {
+                    scaleX = swipeLandingScaleX.value
+                    scaleY = swipeLandingScaleY.value
+                    translationY = swipeLandingOffsetY.value.dp.toPx()
+                }
                 .pillSwipeMotion(swipe),
         ) {
             val chipState = state
@@ -514,6 +565,17 @@ internal fun IndependentNowBarKeyguardChip(
                     travel = { 14.dp },
                     direction = { from, to -> swipe.direction(from, to, chipState.allEvents) },
                     durationMillis = 245,
+                    onSettled = { settledKey ->
+                        if (swipe.consumeLanding(settledKey) &&
+                            viewModel.isKeyguardChipVisible.value &&
+                            !viewModel.keyguardExpansion.isExpanded.value &&
+                            !viewModel.isKeyguardColorOsRevealed.value &&
+                            !viewModel.isBouncerShowing.value &&
+                            !viewModel.interactor.isDozing.value
+                        ) {
+                            swipeLandingPage = settledKey
+                        }
+                    },
                 ) { pageEvent, pageMotion ->
                     // Outgoing notification pages must use the current privacy-filtered event,
                     // never a stale snapshot during a swipe, removal, or redaction change.

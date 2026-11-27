@@ -39,8 +39,10 @@ internal fun <T> SwipePageTransition(
     enterEasing: Easing = LinearOutSlowInEasing,
     retargetFromCurrent: Boolean = false,
     preserveExitDuration: Boolean = false,
+    onSettled: (Any) -> Unit = {},
     content: @Composable (T, Modifier) -> Unit,
 ) {
+    val currentOnSettled by rememberUpdatedState(onSettled)
     val next = key(pageKey) { rememberUpdatedState(target) }
     var shown by remember { mutableStateOf(next) }
     var shownKey by remember { mutableStateOf(pageKey) }
@@ -81,6 +83,7 @@ internal fun <T> SwipePageTransition(
                 (fadeInMillis * (1f - opacity.value)).roundToInt().coerceAtLeast(0)
             else fadeInMillis
         opacity.animateTo(1f, tween(remainingEnter, easing = enterEasing))
+        currentOnSettled(pageKey)
     }
     val pageOpacity = remember(opacity) { { opacity.value } }
     CompositionLocalProvider(LocalSwipePageOpacity provides pageOpacity) {

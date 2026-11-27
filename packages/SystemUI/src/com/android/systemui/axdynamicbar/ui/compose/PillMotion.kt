@@ -33,6 +33,7 @@ internal class PillSwipeMotion(private val viewModel: AxDynamicBarChipViewModel)
     private var fromId: String? = null
     private var toId: String? = null
     private var direction = 1
+    private var pendingLandingId: String? = null
 
     fun drag(distance: Float, touchSlop: Float) {
         // Rubber-band response in either direction, independent of screen density.
@@ -49,6 +50,17 @@ internal class PillSwipeMotion(private val viewModel: AxDynamicBarChipViewModel)
         if (previous) viewModel.cyclePrev() else viewModel.cycleNext()
         toId = activities.value.topEvent?.id
         direction = if (previous) -1 else 1
+        pendingLandingId = toId?.takeIf { it != fromId }
+    }
+
+    fun clearLanding() {
+        pendingLandingId = null
+    }
+
+    fun consumeLanding(pageKey: Any): Boolean {
+        if (pendingLandingId != pageKey) return false
+        pendingLandingId = null
+        return true
     }
 
     fun direction(from: IslandEvent, to: IslandEvent, events: List<IslandEvent>): Int {
