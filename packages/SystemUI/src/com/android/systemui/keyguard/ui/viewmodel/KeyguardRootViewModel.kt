@@ -17,6 +17,9 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.graphics.Point
 import android.util.MathUtils
 import android.view.View.VISIBLE
@@ -72,14 +75,20 @@ import javax.inject.Inject
 import kotlin.math.max
 import kotlin.math.round
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.combineTransform
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -249,8 +258,104 @@ constructor(
         val armed: Boolean = false,
         val cycle: Int = 0,
         val interrupted: Boolean = false,
-        val startProgress: Float = 0f,
     )
+
+    @VisibleForTesting
+    enum class WakeRevealPhase { INACTIVE, HELD, REVEAL }
+
+    private data class WakeRevealGate(
+        val cycle: Int = 0,
+        val held: Boolean = false,
+        val sawAsleep: Boolean = false,
+        val sawScreenOff: Boolean = false,
+        val wasPulsing: Boolean = false,
+        val pulseActive: Boolean = false,
+        val phase: WakeRevealPhase = WakeRevealPhase.INACTIVE,
+    )
+
+    // Retain the originating sleep edge even if the keyguard view is rebound.
+    // In particular, a GONE -> DOZING edge must never arm this reveal.
+    @Suppress("DEPRECATION")
+    private val lockscreenWakeOrigin =
+        keyguardTransitionInteractor.transitions.runningFold(LockscreenWakeReveal()) {
+            previous, step ->
+            when {
+                step.from == LOCKSCREEN && step.to == DOZING -> {
+                    if (step.transitionState == STARTED ||
+                        previous.step.from != LOCKSCREEN || previous.step.to != DOZING
+                    ) {
+                        LockscreenWakeReveal(
+                            step = step,
+                            armed = true,
+                            cycle = previous.cycle + 1,
+                            interrupted = previous.armed &&
+                                previous.step.transitionState != FINISHED,
+                        )
+                    } else {
+                        previous.copy(step = step)
+                    }
+                }
+                previous.armed && step.from == DOZING && step.to == LOCKSCREEN ->
+                    previous.copy(step = step)
+                else -> LockscreenWakeReveal(step = step, cycle = previous.cycle)
+            }
+        }.stateIn(applicationScope, SharingStarted.Eagerly, LockscreenWakeReveal())
+
+    private val lockscreenWakeGate =
+        combine(
+            lockscreenWakeOrigin,
+            powerInteractor.detailedWakefulness,
+            powerInteractor.screenPowerState,
+            keyguardInteractor.isAodAvailable,
+            keyguardInteractor.dozeTransitionModel.map { it.to.isPulsing() }
+                .onStart { emit(false) }.distinctUntilChanged(),
+        ) { reveal, wakefulness, screen, aod, pulsing ->
+            WakeRevealInput(reveal, wakefulness.isAwake(), screen, aod, pulsing)
+        }.runningFold(WakeRevealGate()) { previous, input ->
+            val (reveal, awake, screen, aod, pulsing) = input
+            val step = reveal.step
+            if (aod || !reveal.armed) {
+                WakeRevealGate(cycle = reveal.cycle, wasPulsing = pulsing)
+            } else {
+                val sameCycle = previous.cycle == reveal.cycle
+                val sawAsleep = (sameCycle && previous.sawAsleep) || !awake
+                val screenOff = screen == ScreenPowerState.SCREEN_OFF
+                val screenTurningOff = screen == ScreenPowerState.SCREEN_TURNING_OFF
+                val sawScreenOff = (sameCycle && previous.sawScreenOff) || screenOff
+                val held = (sameCycle && previous.held) || reveal.interrupted ||
+                    (!sameCycle && previous.phase == WakeRevealPhase.HELD) ||
+                    (!sameCycle && !awake && previous.phase == WakeRevealPhase.REVEAL) ||
+                    screenOff || screenTurningOff || screen == ScreenPowerState.SCREEN_TURNING_ON ||
+                    (awake && sawAsleep) || step.transitionState == CANCELED ||
+                    step.transitionState == FINISHED || step.to == LOCKSCREEN
+
+                // Only a new pulse from settled doze can lift the sleep hold.
+                // A pulse left over from the preceding power cycle cannot
+                // expose content while the display is coming back on.
+                val pulseActive = !awake && pulsing && sawScreenOff &&
+                    step.to == DOZING && step.transitionState == FINISHED &&
+                    ((sameCycle && previous.pulseActive) ||
+                        (sameCycle && !previous.wasPulsing))
+                val phase = when {
+                    step.to == DOZING && pulseActive && !screenOff && !screenTurningOff ->
+                        WakeRevealPhase.INACTIVE
+                    step.to == DOZING ->
+                        if (held) WakeRevealPhase.HELD else WakeRevealPhase.INACTIVE
+                    step.transitionState == CANCELED || !awake ||
+                        screen != ScreenPowerState.SCREEN_ON -> WakeRevealPhase.HELD
+                    else -> WakeRevealPhase.REVEAL
+                }
+                WakeRevealGate(
+                    cycle = reveal.cycle,
+                    held = held,
+                    sawAsleep = sawAsleep,
+                    sawScreenOff = sawScreenOff,
+                    wasPulsing = pulsing,
+                    pulseActive = pulseActive,
+                    phase = phase,
+                )
+            }
+        }.stateIn(applicationScope, SharingStarted.Eagerly, WakeRevealGate())
 
     private data class WakeRevealInput(
         val reveal: LockscreenWakeReveal,
@@ -260,92 +365,56 @@ constructor(
         val pulsing: Boolean,
     )
 
-    private data class WakeRevealGate(
-        val cycle: Int = 0,
-        val held: Boolean = false,
-        val sawAsleep: Boolean = false,
-        val limit: Float = 1f,
-    )
-
-    // Track the actual transition edges, including cancellation, rather than only
-    // the latest conflated progress. Sleeping from GONE never arms this reveal.
-    @Suppress("DEPRECATION")
     @VisibleForTesting
-    val lockscreenWakeAlphaLimit: Flow<Float> =
-        combine(
-                keyguardTransitionInteractor.transitions.runningFold(LockscreenWakeReveal()) {
-                    previous, step ->
-                    when {
-                        step.from == LOCKSCREEN && step.to == DOZING -> {
-                            val newSleep = previous.step.from != LOCKSCREEN ||
-                                previous.step.to != DOZING || step.transitionState == STARTED
-                            if (newSleep) {
-                                LockscreenWakeReveal(
-                                    step = step,
-                                    armed = true,
-                                    cycle = previous.cycle + 1,
-                                    interrupted = previous.armed &&
-                                        previous.step.transitionState != FINISHED,
-                                )
-                            } else {
-                                previous.copy(step = step)
-                            }
-                        }
-                        previous.armed && step.from == DOZING && step.to == LOCKSCREEN ->
-                            previous.copy(
-                                step = step,
-                                startProgress = if (step.transitionState == STARTED ||
-                                    previous.step.from != DOZING || previous.step.to != LOCKSCREEN
-                                ) step.value else previous.startProgress,
-                            )
-                        else -> LockscreenWakeReveal(step = step, cycle = previous.cycle)
-                    }
-                }.stateIn(applicationScope, SharingStarted.Eagerly, LockscreenWakeReveal()),
-                powerInteractor.detailedWakefulness,
-                powerInteractor.screenPowerState,
-                keyguardInteractor.isAodAvailable,
-                keyguardInteractor.dozeTransitionModel.map { it.to.isPulsing() }
-                    .onStart { emit(false) }.distinctUntilChanged(),
-            ) { reveal, wakefulness, screen, aod, pulsing ->
-                WakeRevealInput(reveal, wakefulness.isAwake(), screen, aod, pulsing)
-            }
-            .runningFold(WakeRevealGate()) { previous, input ->
-                val (reveal, awake, screen, aod, pulsing) = input
-                val step = reveal.step
-                if (aod || !reveal.armed) {
-                    WakeRevealGate(cycle = reveal.cycle)
-                } else {
-                    val sameCycle = previous.cycle == reveal.cycle
-                    val sawAsleep = (sameCycle && previous.sawAsleep) || !awake
-                    val screenOff = screen == ScreenPowerState.SCREEN_OFF
-                    val held = (sameCycle && previous.held) || reveal.interrupted ||
-                        screenOff || screen == ScreenPowerState.SCREEN_TURNING_ON ||
-                        (awake && sawAsleep) || step.transitionState == CANCELED ||
-                        step.transitionState == FINISHED || step.to == LOCKSCREEN
-                    val limit = when {
-                        // Allow existing doze pulse/authentication presentation.
-                        step.to == DOZING && pulsing && !awake && !screenOff &&
-                            step.transitionState != CANCELED -> 1f
-                        step.to == DOZING -> if (held) 0f else 1f
-                        step.transitionState == CANCELED || !awake || screenOff ||
-                            screen == ScreenPowerState.SCREEN_TURNING_OFF -> 0f
-                        step.transitionState == FINISHED -> 1f
-                        else -> {
-                            // Start from zero even if an interrupted transition
-                            // resumes at nonzero progress. Leave a short reveal
-                            // window for the wallpaper, then ease in the content.
-                            val progress = if (reveal.startProgress >= 1f) 0f else
-                                ((step.value - reveal.startProgress) /
-                                    (1f - reveal.startProgress)).coerceIn(0f, 1f)
-                            val fade = ((progress - 0.15f) / 0.85f).coerceIn(0f, 1f)
-                            fade * fade * (3f - 2f * fade)
-                        }
-                    }
-                    WakeRevealGate(reveal.cycle, held, sawAsleep, limit)
+    val lockscreenWakeRevealPhase: Flow<WakeRevealPhase> =
+        lockscreenWakeGate.map { it.phase }.distinctUntilChanged()
+
+    // The transition can reach FINISHED before the physical display is on.
+    // Start a fresh, frame-driven reveal only after both are ready, rather
+    // than spending the fade's progress while the screen is still off.
+    @VisibleForTesting
+    val lockscreenWakeAlphaLimit: StateFlow<Float> =
+        lockscreenWakeGate
+            .map { it.cycle to it.phase }
+            .distinctUntilChanged()
+            .flatMapLatest { (_, phase) ->
+                when (phase) {
+                    WakeRevealPhase.INACTIVE -> flowOf(1f)
+                    WakeRevealPhase.HELD -> flowOf(0f)
+                    WakeRevealPhase.REVEAL -> lockscreenWakeFade()
                 }
             }
-            .map { it.limit }
-            .distinctUntilChanged()
+            .buffer(0)
+            .stateIn(applicationScope, SharingStarted.Eagerly, 1f)
+
+    private fun lockscreenWakeFade(): Flow<Float> =
+        callbackFlow {
+            trySend(0f)
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                trySend(1f)
+                close()
+                return@callbackFlow
+            }
+            val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                startDelay = 75L
+                duration = 300L
+                addUpdateListener { trySend(it.animatedValue as Float) }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        trySend(1f)
+                        close()
+                    }
+                })
+            }
+            animator.start()
+            awaitClose {
+                // An interrupted power transition cancels the old reveal;
+                // it must not deliver a final visible frame.
+                animator.removeAllUpdateListeners()
+                animator.removeAllListeners()
+                animator.cancel()
+            }
+        }.buffer(Channel.CONFLATED).flowOn(Dispatchers.Main.immediate)
 
     private val zoomOutFromGlanceableHub: Flow<Float> =
         if (!Flags.gestureBetweenHubAndLockscreenMotion()) {

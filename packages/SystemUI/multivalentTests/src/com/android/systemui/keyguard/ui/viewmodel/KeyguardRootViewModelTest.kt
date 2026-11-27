@@ -42,9 +42,12 @@ import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.domain.interactor.pulseExpansionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.DozeStateModel
+import com.android.systemui.keyguard.shared.model.DozeTransitionModel
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel.Companion.PUSHBACK_SCALE_FOR_LOCKSCREEN
+import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel.WakeRevealPhase
 import com.android.systemui.kosmos.collectLastValue
 import com.android.systemui.kosmos.runCurrent
 import com.android.systemui.kosmos.runTest
@@ -380,13 +383,13 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
 
     @Test
     @DisableSceneContainer
-    fun wakeReveal_lockscreenSleepHoldsUntilWakeProgress() = testScope.runTest {
+    fun wakeReveal_waitsForDisplayEvenWhenWakeTransitionFinishesFirst() = testScope.runTest {
         val power = kosmos.fakePowerRepository
         power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
         keyguardRepository.setAodAvailable(false)
-        val limit by collectLastValue(underTest.lockscreenWakeAlphaLimit)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
         runCurrent()
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
 
         power.updateWakefulness(
             WakefulnessState.ASLEEP, WakeSleepReason.POWER_BUTTON,
@@ -397,63 +400,84 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
         )
         power.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
         runCurrent()
-        assertThat(limit).isEqualTo(0f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
 
-        // Display state can arrive before the wakefulness callback.
+        power.updateWakefulness(
+            WakefulnessState.STARTING_TO_WAKE, WakeSleepReason.POWER_BUTTON,
+            WakeSleepReason.POWER_BUTTON, false,
+        )
+        power.setScreenPowerState(ScreenPowerState.SCREEN_TURNING_ON)
+        keyguardTransitionRepository.sendTransitionSteps(
+            KeyguardState.DOZING, KeyguardState.LOCKSCREEN, testScope,
+        )
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
         power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
         runCurrent()
-        assertThat(limit).isEqualTo(0f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.REVEAL)
+    }
+
+    @Test
+    @DisableSceneContainer
+    fun wakeReveal_displayOnBeforeWakeTransitionDoesNotReleaseHold() = testScope.runTest {
+        val power = kosmos.fakePowerRepository
+        keyguardRepository.setAodAvailable(false)
+        power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
+        runCurrent()
+        power.updateWakefulness(
+            WakefulnessState.ASLEEP, WakeSleepReason.POWER_BUTTON,
+            WakeSleepReason.POWER_BUTTON, false,
+        )
+        keyguardTransitionRepository.sendTransitionSteps(
+            KeyguardState.LOCKSCREEN, KeyguardState.DOZING, testScope,
+        )
+        power.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
+        runCurrent()
+        power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
         power.updateWakefulness(
             WakefulnessState.STARTING_TO_WAKE, WakeSleepReason.POWER_BUTTON,
             WakeSleepReason.POWER_BUTTON, false,
         )
         runCurrent()
-        assertThat(limit).isEqualTo(0f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.DOZING, KeyguardState.LOCKSCREEN, testScope, throughValue = 0.1f,
         )
-        assertThat(limit).isEqualTo(0f)
-        keyguardTransitionRepository.sendTransitionSteps(
-            TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 0.6f,
-                TransitionState.RUNNING), testScope, fillInSteps = false,
-        )
-        assertThat(limit!!).isGreaterThan(0f)
-        assertThat(limit!!).isLessThan(1f)
-        keyguardTransitionRepository.sendTransitionSteps(
-            listOf(
-                TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 1f,
-                    TransitionState.RUNNING),
-                TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 1f,
-                    TransitionState.FINISHED),
-            ), testScope,
-        )
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.REVEAL)
     }
 
     @Test
     @DisableSceneContainer
-    fun wakeReveal_interruptedWakeRemainsHiddenUntilNextReveal() = testScope.runTest {
+    fun wakeReveal_interruptedWakeReturnsToHeldUntilDisplayIsReadyAgain() = testScope.runTest {
         val power = kosmos.fakePowerRepository
         keyguardRepository.setAodAvailable(false)
         power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
-        val limit by collectLastValue(underTest.lockscreenWakeAlphaLimit)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
         runCurrent()
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.LOCKSCREEN, KeyguardState.DOZING, testScope, throughValue = 0.5f,
         )
+        power.setScreenPowerState(ScreenPowerState.SCREEN_TURNING_OFF)
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
+        power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.DOZING, KeyguardState.LOCKSCREEN, testScope, throughValue = 0.5f,
         )
+        assertThat(phase).isEqualTo(WakeRevealPhase.REVEAL)
         keyguardTransitionRepository.sendTransitionSteps(
             TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 0.5f,
                 TransitionState.CANCELED), testScope, fillInSteps = false,
         )
-        assertThat(limit).isEqualTo(0f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.LOCKSCREEN, KeyguardState.DOZING, testScope, throughValue = 0.5f,
         )
-        assertThat(limit).isEqualTo(0f)
-        // A cancelled sleep can reverse with a nonzero STARTED progress.
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
+        power.setScreenPowerState(ScreenPowerState.SCREEN_TURNING_ON)
         keyguardTransitionRepository.sendTransitionSteps(
             listOf(
                 TransitionStep(KeyguardState.LOCKSCREEN, KeyguardState.DOZING, 0.5f,
@@ -464,16 +488,45 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
                     TransitionState.RUNNING),
             ), testScope,
         )
-        assertThat(limit).isEqualTo(0f)
-        keyguardTransitionRepository.sendTransitionSteps(
-            listOf(
-                TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 1f,
-                    TransitionState.RUNNING),
-                TransitionStep(KeyguardState.DOZING, KeyguardState.LOCKSCREEN, 1f,
-                    TransitionState.FINISHED),
-            ), testScope,
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
+        power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.REVEAL)
+    }
+
+    @Test
+    @DisableSceneContainer
+    fun wakeReveal_stalePulseDoesNotExposeContentButNewPulseCan() = testScope.runTest {
+        val power = kosmos.fakePowerRepository
+        keyguardRepository.setAodAvailable(false)
+        power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
+        keyguardRepository.setDozeTransitionModel(
+            DozeTransitionModel(DozeStateModel.DOZE_REQUEST_PULSE, DozeStateModel.DOZE_PULSING)
         )
-        assertThat(limit).isEqualTo(1f)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
+        runCurrent()
+        power.updateWakefulness(
+            WakefulnessState.ASLEEP, WakeSleepReason.POWER_BUTTON,
+            WakeSleepReason.POWER_BUTTON, false,
+        )
+        keyguardTransitionRepository.sendTransitionSteps(
+            KeyguardState.LOCKSCREEN, KeyguardState.DOZING, testScope,
+        )
+        power.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
+        runCurrent()
+        power.setScreenPowerState(ScreenPowerState.SCREEN_TURNING_ON)
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.HELD)
+
+        keyguardRepository.setDozeTransitionModel(
+            DozeTransitionModel(DozeStateModel.DOZE_PULSING, DozeStateModel.DOZE)
+        )
+        runCurrent()
+        keyguardRepository.setDozeTransitionModel(
+            DozeTransitionModel(DozeStateModel.DOZE_REQUEST_PULSE, DozeStateModel.DOZE_PULSING)
+        )
+        runCurrent()
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
     }
 
     @Test
@@ -481,7 +534,7 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
     fun wakeReveal_unlockedSleepDoesNotArm() = testScope.runTest {
         val power = kosmos.fakePowerRepository
         keyguardRepository.setAodAvailable(false)
-        val limit by collectLastValue(underTest.lockscreenWakeAlphaLimit)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
         runCurrent()
         keyguardTransitionRepository.sendTransitionSteps(
             KeyguardState.LOCKSCREEN, KeyguardState.GONE, testScope,
@@ -491,12 +544,12 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
         )
         power.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
         runCurrent()
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
         power.setScreenPowerState(ScreenPowerState.SCREEN_ON)
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.DOZING, KeyguardState.LOCKSCREEN, testScope, throughValue = 0.1f,
         )
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
     }
 
     @Test
@@ -504,18 +557,18 @@ class KeyguardRootViewModelTest(flags: FlagsParameterization) : SysuiTestCase() 
     fun wakeReveal_aodDoesNotApplyLimit() = testScope.runTest {
         val power = kosmos.fakePowerRepository
         keyguardRepository.setAodAvailable(true)
-        val limit by collectLastValue(underTest.lockscreenWakeAlphaLimit)
+        val phase by collectLastValue(underTest.lockscreenWakeRevealPhase)
         runCurrent()
         keyguardTransitionRepository.sendTransitionSteps(
             KeyguardState.LOCKSCREEN, KeyguardState.AOD, testScope,
         )
         power.setScreenPowerState(ScreenPowerState.SCREEN_OFF)
         runCurrent()
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
         keyguardTransitionRepository.sendTransitionStepsThroughRunning(
             KeyguardState.AOD, KeyguardState.LOCKSCREEN, testScope, throughValue = 0.1f,
         )
-        assertThat(limit).isEqualTo(1f)
+        assertThat(phase).isEqualTo(WakeRevealPhase.INACTIVE)
     }
 
     @Test
