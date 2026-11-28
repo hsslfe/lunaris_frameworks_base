@@ -396,7 +396,7 @@ internal fun IndependentNowBarKeyguardChip(
             coroutineScope {
                 launch {
                     swipeLandingScaleX.animateTo(
-                        0.92f, tween(75, easing = FastOutSlowInEasing),
+                        0.94f, tween(75, easing = FastOutSlowInEasing),
                     )
                     swipeLandingScaleX.animateTo(
                         1f, spring(dampingRatio = 0.44f, stiffness = 420f),
@@ -404,7 +404,7 @@ internal fun IndependentNowBarKeyguardChip(
                 }
                 launch {
                     swipeLandingScaleY.animateTo(
-                        0.88f, tween(75, easing = FastOutSlowInEasing),
+                        0.91f, tween(75, easing = FastOutSlowInEasing),
                     )
                     swipeLandingScaleY.animateTo(
                         1f, spring(dampingRatio = 0.44f, stiffness = 420f),
