@@ -22,6 +22,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
@@ -282,6 +284,9 @@ internal fun LockscreenMediaCard(
         )
     val foreground = Color.White
     val colors = AxMediaColors(primary, Color.Black, background, foreground)
+    val isDarkMode = isSystemInDarkTheme()
+    val glass = style == LockscreenMediaStyle.ALBUM_ART || style == LockscreenMediaStyle.COS
+    val useDarkGradient = isDarkMode && glass
     val cornerRadius = lockscreenMediaCornerRadius(style)
     val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
     val hasMultipleSessions = viewModel.sessionCount > 1
@@ -303,12 +308,10 @@ internal fun LockscreenMediaCard(
                         } +
                         maxOf(seekBarHeight, timestampHeight) - 20.dp
             }
-        AxBlurLifecycle(enabled = blurVisible) {
+        AxBlurLifecycle(enabled = blurVisible && !useDarkGradient) {
             val themeColors = MaterialTheme.colorScheme
-            val blurEnabled = blurVisible && LocalAxBlurEnabled.current
-            var solidSurface by remember(style, blurEnabled) { mutableStateOf(true) }
-            val colorOsBlurFraction by
-                AxDynamicBarColorOsController.mediaBlurFractionFlow.collectAsStateWithLifecycle()
+            val blurEnabled = blurVisible && !useDarkGradient && LocalAxBlurEnabled.current
+            var solidSurface by remember(style, blurEnabled, useDarkGradient) { mutableStateOf(true) }
             Expandable(
                 controller =
                     rememberExpandableController(color = { Color.Transparent }, shape = shape),
@@ -324,13 +327,24 @@ internal fun LockscreenMediaCard(
                 defaultMinSize = false,
                 useModifierBasedImplementation = true,
             ) { expandable ->
-                val glass =
-                    style == LockscreenMediaStyle.ALBUM_ART || style == LockscreenMediaStyle.COS
                 Box(
                     Modifier.fillMaxSize()
                         .then(if (glass) Modifier else Modifier.background(background))
                 ) {
-                    if (glass) {
+                    if (useDarkGradient) {
+                        // Keep the dark card independent of artwork, wallpaper and blur support.
+                        val gradient = remember {
+                            Brush.verticalGradient(
+                                0f to Color(0xFF303030),
+                                0.55f to Color(0xFF171717),
+                                1f to Color.Black,
+                            )
+                        }
+                        Box(Modifier.fillMaxSize().background(gradient))
+                    } else if (glass) {
+                        val colorOsBlurFraction by
+                            AxDynamicBarColorOsController.mediaBlurFractionFlow
+                                .collectAsStateWithLifecycle()
                         LockscreenMediaBlurBackground(
                             cornerRadius = cornerRadius,
                             overlayColor = Color.Black.copy(alpha = 0.32f).toArgb(),
@@ -374,7 +388,7 @@ internal fun LockscreenMediaCard(
                             label = "LockscreenMediaStyle",
                         ) { currentStyle ->
                             val useSurfaceColors =
-                                solidSurface &&
+                                !isDarkMode && solidSurface &&
                                     (currentStyle == LockscreenMediaStyle.ALBUM_ART ||
                                         currentStyle == LockscreenMediaStyle.COS)
                             val contentColor =
@@ -391,6 +405,7 @@ internal fun LockscreenMediaCard(
                                         foreground = contentColor,
                                         secondaryForeground =
                                             if (useSurfaceColors) themeColors.onSurfaceVariant
+                                            else if (isDarkMode) contentColor.copy(alpha = 0.7f)
                                             else contentColor,
                                     )
                                 LockscreenMediaStyle.ONE_UI ->
@@ -411,6 +426,11 @@ internal fun LockscreenMediaCard(
                                                     primary = themeColors.primary,
                                                     background = themeColors.surface,
                                                     foreground = contentColor,
+                                                )
+                                            } else if (isDarkMode && currentStyle == LockscreenMediaStyle.COS) {
+                                                colors.copy(
+                                                    primary = Color(0xFF80DEEA),
+                                                    background = Color.Black,
                                                 )
                                             } else {
                                                 colors.copy(primary = Color(0xFF80DEEA))

@@ -10,6 +10,7 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -94,14 +95,17 @@ fun LockscreenMedia(
                     ) {
                         { pagerState ->
                             val useSurfaceColors = selectedStyle == LockscreenMediaStyle.ALBUM_ART
+                            val albumArtForeground =
+                                if (isSystemInDarkTheme()) Color.White
+                                else MaterialTheme.colorScheme.onSurface
                             PagerDots(
                                 pagerState = pagerState,
                                 activeColor =
-                                    if (useSurfaceColors) MaterialTheme.colorScheme.onSurface
+                                    if (useSurfaceColors) albumArtForeground
                                     else Color(0xffdee0ff),
                                 nonActiveColor =
                                     if (useSurfaceColors)
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                        albumArtForeground.copy(alpha = 0.38f)
                                     else Color(0xffa7a9ca),
                                 dotSize = 5.dp,
                                 spaceSize = 5.dp,
