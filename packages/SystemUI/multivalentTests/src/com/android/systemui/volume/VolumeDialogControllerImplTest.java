@@ -37,6 +37,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.media.IAudioService;
+import android.media.IVolumeController;
 import android.media.session.MediaSession;
 import android.os.Handler;
 import android.os.Process;
@@ -217,6 +218,22 @@ public class VolumeDialogControllerImplTest extends SysuiTestCase {
                 AudioManager.FLAG_SHOW_UI, true);
         verify(mCallback, times(1)).onShowRequested(Events.SHOW_REASON_VOLUME_CHANGED, false,
                 LOCK_TASK_MODE_NONE);
+    }
+
+    @Test
+    public void testQsExpansion_updatesAudioServiceSuppression() throws Exception {
+        IVolumeController registered = mock(IVolumeController.class);
+        when(mIAudioService.getVolumeController()).thenReturn(registered);
+        MutableStateFlow<Boolean> qsExpanded = StateFlowKt.MutableStateFlow(true);
+        mVolumeController.observeQsExpansion(qsExpanded);
+        mTestScope.getTestScheduler().advanceUntilIdle();
+        Objects.requireNonNull(TestableLooper.get(this)).processAllMessages();
+        verify(mIAudioService).setVolumeControllerUiSuppressed(registered, true);
+
+        qsExpanded.setValue(false);
+        mTestScope.getTestScheduler().advanceUntilIdle();
+        Objects.requireNonNull(TestableLooper.get(this)).processAllMessages();
+        verify(mIAudioService).setVolumeControllerUiSuppressed(registered, false);
     }
 
     @Test

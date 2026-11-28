@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -32,6 +33,9 @@ import android.app.AppOpsManager;
 import android.content.Context;
 import android.media.AudioDeviceAttributes;
 import android.media.AudioSystem;
+import android.media.AudioManager;
+import android.media.IVolumeController;
+import android.os.Binder;
 import android.os.IpcDataCache;
 import android.os.Looper;
 import android.os.PermissionEnforcer;
@@ -156,6 +160,34 @@ public class AudioServiceTest {
                     .sendMicrophoneMuteChangedIntent();
             reset(mSpySystemServer);
         }
+    }
+
+    @Test
+    public void testVolumeControllerUiSuppressed_allowsAdjustmentWithoutPanel() {
+        AudioService.VolumeController volumeController = mAudioService.new VolumeController();
+        IVolumeController controller = mock(IVolumeController.class);
+        when(controller.asBinder()).thenReturn(new Binder());
+        IVolumeController replacement = mock(IVolumeController.class);
+        when(replacement.asBinder()).thenReturn(new Binder());
+        when(mSpyAudioSystem.isStreamActive(anyInt(), anyInt())).thenReturn(false);
+
+        int stream = AudioService.DEFAULT_VOL_STREAM_NO_PLAYBACK;
+        int flags = AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_FROM_KEY;
+        volumeController.setController(controller);
+        Assert.assertTrue(volumeController.suppressAdjustment(stream, flags, false));
+
+        volumeController.setUiSuppressed(controller, true);
+        Assert.assertFalse(volumeController.suppressAdjustment(stream, flags, false));
+        Assert.assertFalse(volumeController.suppressAdjustment(stream, flags, false));
+
+        volumeController.setUiSuppressed(controller, false);
+        Assert.assertTrue(volumeController.suppressAdjustment(stream, flags, false));
+
+        volumeController.setUiSuppressed(controller, true);
+        volumeController.setController(replacement);
+        // A delayed update from the old controller must not change the new one.
+        volumeController.setUiSuppressed(controller, true);
+        Assert.assertTrue(volumeController.suppressAdjustment(stream, flags, false));
     }
 
     @Test

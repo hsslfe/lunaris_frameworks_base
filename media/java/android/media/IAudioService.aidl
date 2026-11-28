@@ -847,4 +847,7 @@ interface IAudioService {
     @EnforcePermission("BLUETOOTH_PRIVILEGED")
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_PRIVILEGED)")
     boolean isScoManagedByAudio();
+
+    // SystemUI can hide the floating panel without suppressing volume adjustment.
+    void setVolumeControllerUiSuppressed(in IVolumeController controller, boolean suppressed);
 }

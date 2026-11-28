@@ -323,10 +323,27 @@ public class VolumeDialogControllerImpl implements VolumeDialogController, Dumpa
         mQsExpanded = expanded;
         mCallbacks.setQsExpandedSupplier(this::isQsExpanded);
         mJavaAdapter.alwaysCollectFlow(expanded, isExpanded -> {
+            // AudioService normally waits for the floating UI before allowing
+            // some key adjustments. Tell it explicitly that QS hides that UI.
+            // Read the latest state on the worker to avoid stale QS callbacks.
+            mWorker.post(this::updateVolumeUiSuppressionW);
             if (isExpanded && isQsExpanded()) {
                 mCallbacks.onDismissRequested(Events.DISMISS_REASON_QUICK_SETTINGS_EXPANDED);
             }
         });
+    }
+
+    private void updateVolumeUiSuppressionW() {
+        try {
+            // SettingsLib owns the registered binder, not the legacy adapter's
+            // local callback. Use the actual controller identity.
+            IVolumeController controller = mAudioService.getVolumeController();
+            if (controller != null) {
+                mAudioService.setVolumeControllerUiSuppressed(controller, isQsExpanded());
+            }
+        } catch (RemoteException e) {
+            Log.w(TAG, "Unable to update volume UI suppression", e);
+        }
     }
 
     private boolean isQsExpanded() {

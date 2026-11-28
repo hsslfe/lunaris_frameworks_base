@@ -13944,6 +13944,12 @@ public class AudioService extends IAudioService.Stub
         if (DEBUG_VOL) Log.d(TAG, "Volume controller visible: " + visible);
     }
 
+    @Override
+    public void setVolumeControllerUiSuppressed(IVolumeController controller, boolean suppressed) {
+        enforceVolumeController("set volume controller UI suppression");
+        mVolumeController.setUiSuppressed(controller, suppressed);
+    }
+
     /** @see AudioManager#setVolumeControllerLongPressTimeoutEnabled(boolean) */
     @Override
     @android.annotation.EnforcePermission(MODIFY_AUDIO_SETTINGS_PRIVILEGED)
@@ -13982,12 +13988,24 @@ public class AudioService extends IAudioService.Stub
 
         private IVolumeController mController;
         private boolean mVisible;
+        private boolean mUiSuppressed;
         private long mNextLongPress;
         private int mLongPressTimeout;
 
-        public void setController(IVolumeController controller) {
+        public synchronized void setController(IVolumeController controller) {
             mController = controller;
             mVisible = false;
+            mUiSuppressed = false;
+            mNextLongPress = 0;
+        }
+
+        synchronized void setUiSuppressed(IVolumeController controller, boolean suppressed) {
+            if (controller == null || !isSameBinder(controller) || mUiSuppressed == suppressed) {
+                return;
+            }
+            mUiSuppressed = suppressed;
+            // Discard a press window belonging to the previous UI presentation.
+            mNextLongPress = 0;
         }
 
         public IVolumeController getController() {
@@ -13999,8 +14017,11 @@ public class AudioService extends IAudioService.Stub
                     Settings.Secure.LONG_PRESS_TIMEOUT, 500, UserHandle.USER_CURRENT);
         }
 
-        public boolean suppressAdjustment(int resolvedStream, int flags, boolean isMute) {
-            if (isMute) {
+        public synchronized boolean suppressAdjustment(int resolvedStream, int flags,
+                boolean isMute) {
+            // QS provides volume controls without opening the floating dialog.
+            // There is no panel to wait for, so allow the actual adjustment.
+            if (isMute || mUiSuppressed) {
                 return false;
             }
             boolean suppress = false;
@@ -14049,7 +14070,7 @@ public class AudioService extends IAudioService.Stub
             return suppress;
         }
 
-        public void setVisible(boolean visible) {
+        public synchronized void setVisible(boolean visible) {
             mVisible = visible;
         }
 
