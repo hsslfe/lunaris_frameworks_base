@@ -16,6 +16,7 @@
 
 package com.android.systemui.axdynamicbar.ui
 
+import com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings
 import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
@@ -85,7 +86,7 @@ constructor(
             interactor.settings.isKeyguardColorOsStyleEnabled,
             interactor.settings.nowBarAppearance,
         ) { keyguardEnabled, colorOsEnabled, nowBar ->
-            (keyguardEnabled || nowBar.enabled) && colorOsEnabled
+            AxDynamicBarSettings.resolveKeyguardColorOsMode(keyguardEnabled, colorOsEnabled, nowBar)
         }
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, false)

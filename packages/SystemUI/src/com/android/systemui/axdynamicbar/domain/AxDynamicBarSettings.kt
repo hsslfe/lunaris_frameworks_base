@@ -33,6 +33,13 @@ class AxDynamicBarSettings @Inject constructor(
     private val statusBarStateController: StatusBarStateController,
 ) {
     companion object {
+        internal fun resolveKeyguardColorOsMode(
+            keyguardEnabled: Boolean,
+            colorOsEnabled: Boolean,
+            nowBar: AxLockscreenNowBarSettings,
+        ): Boolean = if (nowBar.enabled) nowBar.colorOsSwipeUp
+            else keyguardEnabled && colorOsEnabled
+
         const val KEY_ENABLED = "ax_dynamic_bar_enabled"
         const val KEY_EVENTS = "ax_dynamic_bar_events"
         const val KEY_KEYGUARD_ENABLED = "ax_dynamic_bar_lockscreen_enabled"
@@ -275,8 +282,9 @@ class AxDynamicBarSettings @Inject constructor(
             }
 
     val isKeyguardColorOsActive: Boolean
-        get() = (_isKeyguardEnabled.value || nowBarAppearance.value.enabled) &&
-            _isKeyguardColorOsStyleEnabled.value
+        get() = resolveKeyguardColorOsMode(
+            _isKeyguardEnabled.value, _isKeyguardColorOsStyleEnabled.value, nowBarAppearance.value,
+        )
 
     fun isNowBarNotificationEnabled(): Boolean =
         nowBarAppearance.value.let { it.enabled && it.notifications }
